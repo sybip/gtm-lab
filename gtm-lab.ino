@@ -25,7 +25,7 @@
 // - DEBUG may distort protocol timing causing some message loss
 // - VERBOSE **will** break the protocol timings and prevent
 //       any message reception beyond individual packets
-#define VERBOSITY ESP_LOG_INFO
+#define VERBOSITY ESP_LOG_DEBUG
 // END of user options
 
 
@@ -106,8 +106,11 @@ uint8_t ctrlChans[] = CTRLCHANS;
 int bitrate = 24000;
 int freqdev = 12500;
 
+// Some constants related to radio timings etc,
+// Determined mostly through trial-and-error
 #define RX_TIMEOUT 400 // millis
 #define SCAN_DWELL 10  // millis
+
 #define FXOSC 32E6
 
 // Data buffers
@@ -139,8 +142,22 @@ uint8_t prev_ISR1=0;
 uint8_t prev_ISR2=0;
 
 
+// Binary output macros
+#define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
+#define BYTE_TO_BINARY(byte)  \
+  (byte & 0x80 ? '1' : '0'), \
+  (byte & 0x40 ? '1' : '0'), \
+  (byte & 0x20 ? '1' : '0'), \
+  (byte & 0x10 ? '1' : '0'), \
+  (byte & 0x08 ? '1' : '0'), \
+  (byte & 0x04 ? '1' : '0'), \
+  (byte & 0x02 ? '1' : '0'), \
+  (byte & 0x01 ? '1' : '0') 
+
+
 // additive CRC16 function
-uint16_t CRC16_add(uint8_t b, uint16_t crc = 0) {
+uint16_t CRC16_add(uint8_t b, uint16_t crc = 0)
+{
   for (int j = 0x80; j > 0; j >>= 1) {
     uint16_t bit = (uint16_t)(crc & 0x8000);
     crc <<= 1;
@@ -176,6 +193,22 @@ uint16_t gtAlgoH16(uint8_t* str, size_t len)
 }
 
 
+// Dump all radio registers, in hex and binary (datasheet for details)
+// Argument: ESP log level, -1 for printf
+void dumpRegisters(int logLevel)
+{
+  for (int i = 0; i < 0x70; i++) {
+    uint8_t rVal = LoRa.readRegister(i);
+    if (logLevel<0) {
+      printf("0x%02x | 0x%02x | "BYTE_TO_BINARY_PATTERN"\n", i, rVal, BYTE_TO_BINARY(rVal));
+    } else {
+      ESP_LOG_LEVEL_LOCAL(logLevel, TAG, 
+        "0x%02x | 0x%02x | "BYTE_TO_BINARY_PATTERN, i, rVal, BYTE_TO_BINARY(rVal));      
+    }
+  }
+}
+
+
 // Set frequency, argument is channel number (0 to NUMCHANS)
 void setChan(uint8_t chan)
 {
@@ -188,7 +221,8 @@ void setChan(uint8_t chan)
   bool locked = false;
   while(!locked) {
     uint8_t curr_ISR1 = LoRa.readRegister(REG_IRQ_FLAGS_1);
-    if ((curr_ISR1 & 0xd0) == 0xd0)
+    // MODEREADY | PLLLOCK = 0b10010000
+    if ((curr_ISR1 & 0x90) == 0x90)
       locked = true;
   }
 }
@@ -300,6 +334,9 @@ void setup()
   // RegPLL Hop - set fast hopping
   LoRa.writeRegister(REG_PLL_HOP, (0x2d | 0x80));
 
+  // Set Tx power
+  LoRa.setTxPower(17);
+
   // Start RX mode
   LoRa.writeRegister(REG_OP_MODE, MODE_RX_CONTINUOUS);
 
@@ -307,9 +344,8 @@ void setup()
   setCtrlChan();
 
   // Dump registers
-  for (int i = 0; i < 0x60; i++) {
-    LOGD("0x%02x: 0x%02x", i, LoRa.readRegister(i));
-  }
+  dumpRegisters(ESP_LOG_DEBUG);
+
   radioLen = 0;
   LOGI("Receiver up and running");
 }
@@ -372,6 +408,10 @@ void loop()
 
     // if ((radioLen>0) && (radioLen>radioBuf[0])) {  // first byte is len
     // use PAYLOAD_READY ISR bit instead
+    //
+    // FIXME this still isn't 100% right, as there may still be unread data
+    //   in the FIFO when PayloadREADY pops
+    //
     if (payReady) {
       LOGD("rxLen=%d", radioLen);
       ESP_LOG_BUFFER_HEXDUMP(TAG, radioBuf, radioLen, ESP_LOG_VERBOSE);
@@ -382,6 +422,8 @@ void loop()
           LOGD("REEDSOLO");
           // Packet OK, send it for further processing
           rxPacket(radioLen-8);
+        } else {
+          resetState();
         }
       }
       radioLen = 0;
