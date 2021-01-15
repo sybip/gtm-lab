@@ -11,7 +11,7 @@ The inspiration for the project was a message posted by user **dillon**
 on the goTenna community forum:
 > put a goTenna assembly line in every home and let’s see them fight this door-to-door
 
-While the long-term goal of the project is a fully GTM compatible open-source 
+While the long-term goal of the project is a fully GTM interoperable open-source 
 protocol stack running on open-source hardware, the short term goal is really just 
 to have fun and share the lessons learned.
 
@@ -28,6 +28,11 @@ Full RX capability:
 - data packet reception and reassembly
 
 **No TX capability** currently.
+
+## Interop testing
+The software is tested for interoperation with:
+- itself
+- goTenna Mesh, firmware 1.1.8
 
 ## Supported hardware
 - **Easy:** out of the box, the code contains pre-defined configurations for two 
@@ -108,7 +113,8 @@ https://github.com/argilo/gr-tenna
 - [Sandeep Mistry](https://github.com/sandeepmistry/arduino-LoRa), 
 [Mike Lubinets](https://github.com/mersinvald/Reed-Solomon), 
 [Simoniy Peter](https://github.com/simonyipeter/Arduino-FEC), 
-many thanks and humble apologies for butchering your software :)
+[Alec Murphy](https://gitlab.com/almurphy/ESP32GTM), 
+many thanks and humble apologies for butchering your code :)
 - and [everyone mentioned on this page](https://github.com/sybip/pyGT/wiki/Resources)
 
 Thank you. 
