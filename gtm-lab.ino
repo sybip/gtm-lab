@@ -25,7 +25,7 @@
 // - DEBUG may distort protocol timing causing some message loss
 // - VERBOSE **will** break the protocol timings and prevent
 //       any message reception beyond individual packets
-#define VERBOSITY ESP_LOG_DEBUG
+#define VERBOSITY ESP_LOG_INFO
 // END of user options
 
 
