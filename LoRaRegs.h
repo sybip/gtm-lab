@@ -50,6 +50,8 @@
 #define REG_PA_RAMP              0x0a
 #define REG_RX_BW                0x12
 #define REG_PREAMBLE_DETECT      0x1f
+#define REG_FSK_PREAMBLE_MSB     0x25
+#define REG_FSK_PREAMBLE_LSB     0x26
 #define REG_SYNC_CONFIG          0x27
 #define REG_PACKET_CONFIG_1      0x30
 #define REG_PACKET_CONFIG_2      0x31
