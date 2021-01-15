@@ -36,9 +36,10 @@ The software is tested for interoperation with:
 
 ## Supported hardware
 - **Easy:** out of the box, the code contains pre-defined configurations for two 
-consumer boards, selectable via the `BOARD_TYPE` line in the source file:
-  - Sparkfun WRL-15006
-  - LILYGO t-beam 1.0 and newer
+widely available consumer boards, selectable via the `BOARD_TYPE` line in the 
+source file:
+  - [Sparkfun WRL-15006](https://github.com/sparkfun/ESP32_LoRa_1Ch_Gateway)
+  - [LILYGO t-beam 1.0](https://github.com/Xinyuan-LilyGO/LilyGO-T-Beam) and newer
 
 - **Medium:** any ESP32 board with an SPI-connected RFM9x or compatible radio 
 should work, as long as the correct pin connections are configured in the 
