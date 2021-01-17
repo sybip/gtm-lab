@@ -40,6 +40,10 @@ mesh network.
 - RSSI reading
 - better documentation
 - relay/mesh functionality
+- better buffer overflow protection
+- clean up the RX flow (refactor as FSM?)
+- use interrupts instead of polling
+- optimize power usage
 
 ## Interop testing
 The software is tested for interoperation with:
@@ -47,7 +51,7 @@ The software is tested for interoperation with:
 - goTenna Mesh, firmware 1.1.8
 
 ## Code quality
-Could be indulgently described as *barely functional early-proof-of-concept*.
+Could be indulgently described as *barely functional early-proof-of-concept*
 
 ## Supported hardware
 - **Easy:** out of the box, the code contains pre-defined configurations for two 
@@ -87,10 +91,10 @@ library was modded to support variable length messages and alternative FCRs,
 and renamed to **RS-mod-FCR**
 
 ## Operation
-### Basic operation - packet logger
+### Basic operation - packet logger and simple shouter
 Connect to the board's USB port with a serial terminal at 115200bps.
-Using your goTenna kit, generate some goTenna message traffic (ping, location 
-tethering etc).
+Using your goTenna Mesh kit, generate some goTenna message traffic (ping, 
+location tethering etc).
 The messages should appear in the serial terminal:
 ```
 I (6475353) GTMLAB: RX CCh=01 SYNC(1): chIDX=1, frags=2, iniTTL=3, curTTL=2
@@ -100,16 +104,24 @@ I (6475436) GTMLAB: complete: len=135, hash=0xcafe, time=88ms
 RX_MSG:0302|003fff55555555555500ff0000fb100100......
 ```
 
+Type a short text in the serial console and press Enter. The text will be 
+transmitted as a SHOUT class message, and (assuming that all your settings 
+are correct) received by the goTenna Mesh clients in range.
+
 ### Radio protocol exploration
-Change the `VERBOSITY` line to `DEBUG` or even `VERBOSE` to view details 
-of received packets, correction protocols, channel hopping etc.
+Change the `VERBOSITY` line to `ESP_LOG_DEBUG` or even `ESP_LOG_VERBOSE` 
+to view details of received packets, correction protocols, channel hopping etc.
 
 ### Message formats exploration
 The output lines prefixed with `RX_ACK` and `RX_MSG` contain full hex dumps of 
 received radio traffic (see the source code for details on what some of those 
 bytes mean). All message classes are received, including encrypted messages.
-These lines can be further processed on the computer using a Python or PERL 
+
+These objects can be further processed on the computer using a Python or PERL 
 script to study the format of the packets and extract useful information.
+
+### Test console
+Documented inside the playHard.h file and subject to continuous change.
 
 ## Documentation and further info
 All technical information relevant to this project is (or will be) published 
