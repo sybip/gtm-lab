@@ -4,7 +4,7 @@ An unofficial goTenna Mesh protocol playground
 ## Introduction
 Hello and welcome to the GTM Lab. This is a fun project to study and 
 re-implement the goTenna Mesh protocols on inexpensive hardware based on the 
-ESP32 MCU and RFM9x radio modules, using only unrestricted, publicly available 
+ESP32 MCU and RFM95W radio modules, using only unrestricted, publicly available 
 information. All project code is open source under the [MIT license](/LICENSE).
 
 The inspiration for the project was a message posted by user **dillon** 
@@ -19,7 +19,10 @@ So, if protocol reverse-engineering and exploring the sub-GHz ISM band are
 your idea of fun too, grab a copy of the code and give it a spin!
 
 ## Development status
-Full RX capability:
+Executive summary: **can send and receive messages** to/from the goTenna 
+mesh network.
+
+### RX capability:
 - channel hopping
 - preamble and syncword detection
 - control channel scanning with adjustable dwell time
@@ -27,21 +30,32 @@ Full RX capability:
 - control packet (SYNC/ACK) reception
 - data packet reception and reassembly
 
-**No TX capability** currently.
+### TX capability:
+- assemble radio packets with header and error correction codes
+- generate ACK, SYNC, DATA payloads with correct formats
+- packetize and send large messages up to 255 bytes
+
+### TODO - not yet implemented:
+- listen-before-transmit control channel sensing
+- RSSI reading
+- better documentation
+- relay/mesh functionality
 
 ## Interop testing
 The software is tested for interoperation with:
 - itself
 - goTenna Mesh, firmware 1.1.8
 
+## Code quality
+Could be indulgently described as *barely functional early-proof-of-concept*.
+
 ## Supported hardware
 - **Easy:** out of the box, the code contains pre-defined configurations for two 
-widely available consumer boards, selectable via the `BOARD_TYPE` line in the 
-source file:
-  - [Sparkfun WRL-15006](https://github.com/sparkfun/ESP32_LoRa_1Ch_Gateway)
-  - [LILYGO t-beam 1.0](https://github.com/Xinyuan-LilyGO/LilyGO-T-Beam) and newer
+consumer boards, selectable via the `BOARD_TYPE` line in the source file:
+  - Sparkfun WRL-15006
+  - LILYGO t-beam 1.0 and newer
 
-- **Medium:** any ESP32 board with an SPI-connected RFM9x or compatible radio 
+- **Medium:** any ESP32 board with an SPI-connected RFM95W or compatible radio 
 should work, as long as the correct pin connections are configured in the 
 source (using the existing definitions as an example)
 
@@ -58,7 +72,7 @@ mode.
 ## Installation
 - Download the code (all files) from https://github.com/sybip/gtm-lab
 - Edit the .ino file and change the `BOARD_TYPE` and `ISM_REGION` definitions 
-to suit your environment
+to suit your environment; **do not skip this step**
 - Compile and upload to your board using Arduino 1.8+ with ESP32 1.0+ add-ons
 
 You're ready to play!
@@ -85,14 +99,15 @@ I (6475436) GTMLAB: RX DCh=41 DATA(2): len=45, fragIDX=1
 I (6475436) GTMLAB: complete: len=135, hash=0xcafe, time=88ms
 RX_MSG:0302|003fff55555555555500ff0000fb100100......
 ```
+
 ### Radio protocol exploration
-Change the VERBOSITY field to DEBUG or even VERBOSE to view details of 
-received packets, correction protocols, channel hopping etc.
+Change the `VERBOSITY` line to `DEBUG` or even `VERBOSE` to view details 
+of received packets, correction protocols, channel hopping etc.
 
 ### Message formats exploration
-The output lines prefixed with RX_ACK and RX_MSG contain full hex dumps of 
+The output lines prefixed with `RX_ACK` and `RX_MSG` contain full hex dumps of 
 received radio traffic (see the source code for details on what some of those 
-bytes mean).
+bytes mean). All message classes are received, including encrypted messages.
 These lines can be further processed on the computer using a Python or PERL 
 script to study the format of the packets and extract useful information.
 
