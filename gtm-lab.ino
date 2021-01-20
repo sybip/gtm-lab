@@ -129,6 +129,12 @@ uint8_t TXFRAGSIZE = 90;   // it's what they use
 #define PKT_TYPE_DATA 2
 #define PKT_TYPE_ACK  3
 
+// Message class IDs
+#define MSG_CLASS_P2P   0
+#define MSG_CLASS_GROUP 1
+#define MSG_CLASS_SHOUT 2
+#define MSG_CLASS_EMERG 3
+
 // Data buffers
 uint8_t radioBuf[256];    // radio packet buffer
 uint8_t radioDec[248];    // reedsolo decode buffer
@@ -212,6 +218,22 @@ uint16_t gtAlgoH16(uint8_t* str, size_t len)
 
     // Derive 16-bit value from 32-bit hash by XORing its two halves
     return ((h & 0xFFFF0000) >> 16) ^ (h & 0xFFFF);
+}
+
+
+// calculates message hash using GTH16 algo
+uint16_t msgHash16(uint8_t* mBuf)
+{
+  // position of HEAD element (depends on message class)
+  uint8_t headPos = 15;
+
+  if ((mBuf[0] == MSG_CLASS_SHOUT) || (mBuf[0] == MSG_CLASS_EMERG)) {
+    headPos = 5;
+  }
+
+  // FIXME - do a sanity check on TLV header? (FB 10)
+
+  return gtAlgoH16(mBuf+headPos, 16);
 }
 
 
@@ -585,14 +607,10 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
       // hop to next data channel to receive more fragments
       setDataChanX(++currDChIdx);
     } else {
-      // no more frags; dispatch packet and hop to control channel
+      // no more frags; output packet and hop to control channel
       // ...but first, calculate GTH16 hash
-      if ((packetBuf[0]==2) || (packetBuf[0]==2)) {
-        msgH16 = gtAlgoH16(packetBuf+5, 16);   // location of HEAD element
-      } else {
-        msgH16 = gtAlgoH16(packetBuf+15, 16);  // location of HEAD element
-      }
-      LOGI("complete: len=%d, hash=0x%04x, time=%dms", packetLen, msgH16, (millis()-dataStart));
+      msgH16 = msgHash16(packetBuf);
+      LOGI("RX complete: len=%d, hash=0x%04x, time=%dms", packetLen, msgH16, (millis()-dataStart));
 
       // output in standardized format (inittl, curttl, | ,hexmsg)
       printf("RX_MSG:");
@@ -697,7 +715,7 @@ int txPacket(uint8_t *txBuf, uint8_t txLen, bool isCtrl)
 // Takes a packet payload,
 // prepends packet header, appends crc16 and reed-solomon code
 // and then invokes txPacket() to SEND the packet over radio
-// NOTE: Don't use this function directly unless you really need to
+// NOTE: Don't use this function directly unless you really need to;
 //  the txSend(Ack|Sync|Msg) functions below are easier and safer
 int txEncodeAndSend(uint8_t * pktBuf, uint8_t pktLen, uint8_t pktType)
 {
@@ -794,6 +812,10 @@ int txSendMsg(uint8_t * mBuf, uint8_t mLen, uint8_t iniTTL, uint8_t curTTL)
   uint8_t oLen = 0;    // output length
 
   uint8_t nFrags = ceil(1.0 * mLen / TXFRAGSIZE);
+
+  // calculate message hash
+  uint16_t msgH16 = msgHash16(mBuf);
+  LOGI("TX start: len=%d, hash=0x%04x, frags=%d", mLen, msgH16, nFrags);
 
   // send sync packet
   txSendSync(currDChIdx, nFrags, iniTTL, curTTL);

@@ -9,12 +9,6 @@
 // -----------------------
 //  do you even lift? :)
 
-// Message class IDs
-#define MSG_CLASS_P2P   0
-#define MSG_CLASS_GROUP 1
-#define MSG_CLASS_SHOUT 2
-#define MSG_CLASS_EMERG 3
-
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
 #define MSGB_TLV_NICK 0x03    // Message sender nickname
@@ -152,11 +146,11 @@ int conExec()
   //  !mr = set RX mode
   //  !mt = set TX mode
   //    (all !m commands will also pause chan scanning)
-  //  !rr = dump ALL registers
+  //  !ra = dump ALL registers (changed from !rr)
   //  !ri = dump ISR registers
   //  !rf = dump entire FIFO content
   //      (use !r00 to read one FIFO byte)
-  //  !rXX = read register XX (in HEX)
+  //  !rrXX = read register XX (in HEX)
   //  !wXXYY = write to register XX value YY
   //      (XX and YY in HEX)
   //  !cDD = change channel (DD in decimal)
@@ -219,7 +213,7 @@ int conExec()
 
   } else if (conBuf[1] == 'r') {
     // VIEW
-    if (conBuf[2] == 'r') {
+    if (conBuf[2] == 'a') {
       // READ ALL REGISTERS
       dumpRegisters(-1);  // to stdout
     } else if (conBuf[2] == 'i') {
@@ -235,8 +229,15 @@ int conExec()
       }
       printf("\n");
 
-    } else {
-      memcpy(hexBuf, conBuf+2, 2);
+    } else if (conBuf[2] == 's') {
+      // READ STATE VARIABLES
+      printf("SCANNING: %s\n", scanning ? "ON":"OFF");
+      printf("RECVDATA: %s\n", recvData ? "ON":"OFF");
+      printf("INTXMODE: %s\n", inTXmode ? "ON":"OFF");
+      printf("CURRCHAN: %d\n", currChan);
+
+    } else if (conBuf[2] == 'r') {
+      memcpy(hexBuf, conBuf+3, 2);
       wReg = strtoul(hexBuf, NULL, 16) & 0xff;
       wVal = LoRa.readRegister(wReg);
       printf("0x%02x | 0x%02x | "BYTE_TO_BINARY_PATTERN"\n", wReg, wVal, BYTE_TO_BINARY(wVal));
