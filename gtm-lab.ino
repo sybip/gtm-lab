@@ -8,26 +8,10 @@
 #include <TimeLib.h>
 #include <SPI.h>
 
+#include "gtmConfig.h"
 #include "LoRaX.h"
 #include "LoRaRegs.h"
 #include "RS-mod-FCR.h"
-
-//
-// USER CONFIGURABLE OPTIONS
-// -------------------------
-// These are make-or-break settings, so choose carefully
-//
-// ISM_REGION: 1=US/CA, 2=EU, 4=AU/NZ, 6=TW/JP
-#define ISM_REGION 1
-// BOARD_TYPE: 1=TBEAM-1.x, 2=WRL-15006
-#define BOARD_TYPE 1
-// Logging verbosity, please use sparingly:
-// - DEBUG may distort protocol timing causing some message loss
-// - VERBOSE **will** break the protocol timings and prevent
-//       any message reception beyond individual packets
-#define VERBOSITY ESP_LOG_INFO
-// END of user options
-
 
 // Logging functions and options
 #define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE  // DO NOT EDIT THIS LINE
@@ -419,7 +403,10 @@ void gtmlabLoop()
   if ((curr_ISR1 != prev_ISR1) || (curr_ISR2 != prev_ISR2)) {
     // Something changed in the ISR registers
 
-    LOGV("IRQs: %02x|%02x", curr_ISR1, curr_ISR2);
+    LOGV("IRQs: "BYTE_TO_BINARY_PATTERN" "BYTE_TO_BINARY_PATTERN, 
+             BYTE_TO_BINARY(curr_ISR1),
+             BYTE_TO_BINARY(curr_ISR2));
+
     if (((prev_ISR1 & 0x02)!=0x02) && ((curr_ISR1 & 0x02)==0x02)) {
       LOGD("PREAMBLE (t=0)");
       pktStart=millis();
