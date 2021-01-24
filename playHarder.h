@@ -141,6 +141,11 @@ int conExec()
 
   // implement a (very basic) command console
   // available commands:
+  //  !lv = set logging level to VERBOSE
+  //  !ld = set logging level to DEBUG
+  //  !li = set logging level to INFO
+  //  !lw = set logging level to WARNING
+  //  !le = set logging level to ERROR
   //  !m0 = set SLEEP mode
   //  !m1 = set STANDBY mode
   //  !mr = set RX mode
@@ -159,7 +164,24 @@ int conExec()
   //  !ta = transmit a random ACK packet
   //  !tm = transmit a random shout message
   //
-  if (conBuf[1] == 'm') {
+  if (conBuf[1] == 'l') {
+    if (conBuf[2] == 'v') {
+      esp_log_level_set("*", ESP_LOG_VERBOSE);
+      LOGI("SET_LOG: VERBOSE");
+    } else if (conBuf[2] == 'd') {
+      esp_log_level_set("*", ESP_LOG_DEBUG);
+      LOGI("SET_LOG: DEBUG");
+    } else if (conBuf[2] == 'i') {
+      esp_log_level_set("*", ESP_LOG_INFO);
+      LOGI("SET_LOG: INFO");
+    } else if (conBuf[2] == 'w') {
+      esp_log_level_set("*", ESP_LOG_WARN);
+      LOGI("SET_LOG: WARN");
+    } else if (conBuf[2] == 'e') {
+      esp_log_level_set("*", ESP_LOG_ERROR);
+      LOGI("SET_LOG: ERROR");
+    }
+  } else if (conBuf[1] == 'm') {
     scanning = false;
     LOGI("SCANNING is now OFF ('!h1' to resume)");
     if (conBuf[2] == '0') {
