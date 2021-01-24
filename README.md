@@ -54,8 +54,9 @@ The software is tested for interoperation with:
 Could be indulgently described as *barely functional early-proof-of-concept*
 
 ## Supported hardware
-- **Easy:** out of the box, the code contains pre-defined configurations for two 
-consumer boards, selectable via the `BOARD_TYPE` line in the source file:
+- **Easy:** out of the box, the code contains pre-defined configurations for 
+two widely available, **open-source hardware** boards, selectable via the 
+`BOARD_TYPE` definition in the configuration file:
   - [Sparkfun WRL-15006](https://github.com/sparkfun/ESP32_LoRa_1Ch_Gateway)
   - [LILYGO t-beam 1.0](https://github.com/Xinyuan-LilyGO/LilyGO-T-Beam) and newer
 
