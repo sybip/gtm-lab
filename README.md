@@ -56,16 +56,16 @@ Could be indulgently described as *barely functional early-proof-of-concept*
 ## Supported hardware
 - **Easy:** out of the box, the code contains pre-defined configurations for two 
 consumer boards, selectable via the `BOARD_TYPE` line in the source file:
-  - Sparkfun WRL-15006
-  - LILYGO t-beam 1.0 and newer
+  - [Sparkfun WRL-15006](https://github.com/sparkfun/ESP32_LoRa_1Ch_Gateway)
+  - [LILYGO t-beam 1.0](https://github.com/Xinyuan-LilyGO/LilyGO-T-Beam) and newer
 
-- **Medium:** any ESP32 board with an SPI-connected RFM95W or compatible radio 
-should work, as long as the correct pin connections are configured in the 
-source (using the existing definitions as an example)
+- **Medium:** any ESP32 board with an SPI-connected RFM95W or compatible 
+SX1276-based radio should work, as long as the correct pin connections are 
+configured in the source (using the existing definitions as an example)
 
-- **Advanced:** RFM69-type radios should also work, but would require a rewrite 
-of all register-specific code as the register numbers and layouts are 
-different.
+- **Advanced:** RFM69-type (SX1231H based) radios should also work, but would 
+require a rewrite of all register-specific code as the register numbers and 
+layouts are different.
 
 **NOTE:** LoRa functionality is NOT REQUIRED and NOT USED. 
 The choice of a LoRa capable radio was purely circumstantial, 
@@ -75,8 +75,8 @@ mode.
 
 ## Installation
 - Download the code (all files) from https://github.com/sybip/gtm-lab
-- Edit the .ino file and change the `BOARD_TYPE` and `ISM_REGION` definitions 
-to suit your environment; **do not skip this step**
+- **do not skip this step** Edit the `gtmConfig.h` file and change the 
+`BOARD_TYPE` and `ISM_REGION` definitions to suit your environment; 
 - Compile and upload to your board using Arduino 1.8+ with ESP32 1.0+ add-ons
 
 You're ready to play!
