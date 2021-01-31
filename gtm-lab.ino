@@ -97,7 +97,10 @@ int freqdev = 12500;
 // Some constants related to radio timings etc,
 // Determined mostly through trial-and-error
 #define RX_TIMEOUT 400 // millis
+#define PKT_TIMEOUT 40 // millis
 #define SCAN_DWELL 10  // millis
+#define FIFOSIZE 64  // actually 66, but leave a margin
+#define FIFOTHRE 15  // fifo notification threshold
 uint8_t txSyncDelay = 10;  // millis to wait between sync packet and first data packet
 uint8_t txPackDelay = 8;   // millis to wait between data packets
 uint8_t TXFRAGSIZE = 90;   // it's what they use
@@ -300,6 +303,7 @@ void resetState()
   scanning = true;    // cycling through ctrl chans 
   inTXmode = false;   // we're not in a transmission
   recvData = false;   // we're not receiving data
+  pktStart = 0;   // we're not receiving a packet
   setCtrlChan();
 }
 
@@ -366,6 +370,9 @@ void gtmlabSetup()
   // Set maximum payload length - 255 should be enough
   LoRa.writeRegister(REG_PAYLOAD_LENGTH, 0xFF);
 
+  // Set FIFO threshold
+  LoRa.writeRegister(REG_FIFO_THRESHOLD, FIFOTHRE);
+
   // RegPLL Hop - set fast hopping
   LoRa.writeRegister(REG_PLL_HOP, (0x2d | 0x80));
 
@@ -403,9 +410,17 @@ void gtmlabLoop()
   if ((curr_ISR1 != prev_ISR1) || (curr_ISR2 != prev_ISR2)) {
     // Something changed in the ISR registers
 
+    LOGV("%s-%s-%s",
+          (curr_ISR1 & 0x02) ? "PR":"--",
+          (curr_ISR1 & 0x01) ? "SW":"--",
+          (curr_ISR2 & 0x04) ? "PL":"--");          
+
     LOGV("IRQs: "BYTE_TO_BINARY_PATTERN" "BYTE_TO_BINARY_PATTERN, 
              BYTE_TO_BINARY(curr_ISR1),
              BYTE_TO_BINARY(curr_ISR2));
+
+    // First check preamble, then syncword, then payready
+    // The order is IMPORTANT - that's why we need a FSM
 
     if (((prev_ISR1 & 0x02)!=0x02) && ((curr_ISR1 & 0x02)==0x02)) {
       LOGD("PREAMBLE (t=0)");
@@ -413,14 +428,24 @@ void gtmlabLoop()
     }
 
     if (((prev_ISR1 & 0x03)!=0x03) && ((curr_ISR1 & 0x03)==0x03)) {
-      LOGD("SYNCWORD (t=%d)", (millis()-pktStart));
+      if (! pktStart) {
+        // missed the preamble, but it's OK, start the timer now
+        pktStart=millis();
+      }
+      LOGD("PRE+SYNW (t=%d)", (millis()-pktStart));
       radioLen = 0;
       memset(radioBuf, 0, 256);
       scanning = false;   // Stay on channel
     }
 
     if (((prev_ISR2 & 0x04)!=0x04) && ((curr_ISR2 & 0x04)==0x04)) {
-      LOGD("PAYREADY (t=%d)", (millis()-pktStart));
+      if (pktStart) {
+        LOGD("PAYREADY (t=%d)", (millis()-pktStart));
+      } else {
+        LOGD("PAYREADY IGNORED");  // likely a misfire
+        resetState();
+        // FIXME - bailout?
+      }
     }
 
     if (((prev_ISR1 & 0x03)==0x03) && ((curr_ISR1 & 0x03)!=0x03)) {
@@ -428,6 +453,7 @@ void gtmlabLoop()
         // lost sync while receiving packet - NOT GOOD
         LOGI("LOSTSYNC at pos %d/%d, t=%d", radioLen-1, radioBuf[0], (millis()-pktStart));
         resetState();
+        // FIXME - bailout?
       }
     }
 
@@ -449,7 +475,7 @@ void gtmlabLoop()
       //   keep reading fifo until fifoempty
       while (!((curr_ISR2 = LoRa.readRegister(REG_IRQ_FLAGS_2)) & 0x40)) {
         radioBuf[radioLen] = LoRa.readRegister(REG_FIFO);
-        LOGD("< %02x", radioBuf[radioLen]);
+        LOGV("< %02x", radioBuf[radioLen]);
         radioLen++;
       }
 
@@ -463,19 +489,25 @@ void gtmlabLoop()
           LOGD("REEDSOLO");
           // Packet OK, send it for further processing
           rxPacket(radioDec, radioLen-8);
+        } else {
+          LOGD("REEDSOLO FAIL");          
         }
       } else {
         LOGD("Invalid rxLen");
         resetState();
+        return;
       }
 
-      pktStart = millis();
+      pktStart = 0;  // no packet being received right now
       radioLen = 0;
     }
   }
 
-  if (recvData && (millis()-dataStart > RX_TIMEOUT)) {
-    LOGI("RX_STALL");
+  // If a packet reception doesn't complete in this time, 
+  //  it never will; reset state immediately to hopefully
+  //  pick up a retransmission
+  if ((pktStart > 0) && (millis()-pktStart > PKT_TIMEOUT)) {
+    LOGI("PKTSTALL (t=%d)", millis()-pktStart);
     resetState();
   }
 
@@ -680,13 +712,13 @@ int txPacket(uint8_t *txBuf, uint8_t txLen, bool isCtrl)
     // When our FIFO load level near maximum,
     // to avoid an overrun, stop loading any more bytes until
     //   FIFO level drops below threshold
-    while(fifoLevel>=64) { // FIXME fifosize
+    while(fifoLevel >= FIFOSIZE) {
       // read ISR until "fifo above threshold" bit clears
       curr_ISR2 = LoRa.readRegister(REG_IRQ_FLAGS_2);
       if(curr_ISR2 & 0x20) {  // fifolevel
         LOGV("ISR2=%02x", curr_ISR2);
       } else {
-        fifoLevel = 15;  // FIXME fifothre
+        fifoLevel = FIFOTHRE;
       }
     }
   }
