@@ -56,6 +56,7 @@
 #define REG_PACKET_CONFIG_1      0x30
 #define REG_PACKET_CONFIG_2      0x31
 #define REG_PAYLOAD_LENGTH       0x32
+#define REG_FIFO_THRESHOLD       0x35
 #define REG_IRQ_FLAGS_1          0x3e
 #define REG_IRQ_FLAGS_2          0x3f
 #define REG_PLL_HOP              0x44
