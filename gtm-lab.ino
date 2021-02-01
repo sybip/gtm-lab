@@ -836,6 +836,9 @@ int txSendMsg(uint8_t * mBuf, uint8_t mLen, uint8_t iniTTL, uint8_t curTTL)
   uint16_t msgH16 = msgHash16(mBuf);
   LOGI("TX start: len=%d, hash=0x%04x, frags=%d", mLen, msgH16, nFrags);
 
+  // pick a random data channel
+  currDChIdx = random(sizeof(dataChans)-1);
+
   // send sync packet
   txSendSync(currDChIdx, nFrags, iniTTL, curTTL);
 
