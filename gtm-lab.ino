@@ -98,6 +98,7 @@ int freqdev = 12500;
 // Determined mostly through trial-and-error
 #define RX_TIMEOUT 400 // millis
 #define PKT_TIMEOUT 40 // millis
+#define CCH_SILENCE 40 // millis
 #define SCAN_DWELL 10  // millis
 #define FIFOSIZE 64  // actually 66, but leave a margin
 #define FIFOTHRE 15  // fifo notification threshold
@@ -142,6 +143,8 @@ bool recvData = false;  // if true, we are on a data chan
 uint8_t currChan = 0;   // current channel NUMBER
 uint8_t currDChIdx = 0; // current data chan INDEX in map
 uint8_t currCChIdx = 0; // current ctrl chan INDEX in map
+// millis when last preamble detected on cChan
+unsigned long lastCChAct[4] = { 0, 0, 0, 0 };
 
 // Timing related variables
 unsigned long pktStart=0;   // millis when packet RX started
@@ -282,6 +285,30 @@ void setCtrlChan()
 }
 
 
+// Tune to a FREE control channel **for TX**
+// This is early draft work and will require further refinement
+void setCtrlChanTX()
+{
+  // Find a channel that has been last active at least CCH_SILENCE (40ms) ago
+  // Where "last active" is defined as the greatest of:
+  // - time last preamble detected
+  // - time we (re)started cch scanning
+  int sinceActive = 0;
+
+  for (int i=0; i < sizeof(ctrlChans); i++) {
+    currCChIdx++;
+    currCChIdx %= sizeof(ctrlChans);
+    sinceActive = millis() - lastCChAct[currCChIdx];
+    LOGD("LAST_ACT(%d): %dms", currCChIdx, sinceActive);
+    if (sinceActive > CCH_SILENCE)
+      break;
+  }
+
+  // LOGD("LAST_ACT(%d): %dms", currCChIdx, millis() - lastCChAct[currCChIdx]);
+  setChan(ctrlChans[currCChIdx]);
+}
+
+
 // Reset receiver soft buffers and state variables
 // Call this after a successful object reception or transmission, 
 //   or to bail out of a receive operation that failed partway
@@ -304,6 +331,11 @@ void resetState()
   inTXmode = false;   // we're not in a transmission
   recvData = false;   // we're not receiving data
   pktStart = 0;   // we're not receiving a packet
+
+  // initialize channel activity timers
+  for (int i=0; i<4; i++)
+    lastCChAct[i] = millis();
+
   setCtrlChan();
 }
 
@@ -425,6 +457,10 @@ void gtmlabLoop()
     if (((prev_ISR1 & 0x02)!=0x02) && ((curr_ISR1 & 0x02)==0x02)) {
       LOGD("PREAMBLE (t=0)");
       pktStart=millis();
+      if (!recvData) {
+        // record "last preamble detected" for control channel
+        lastCChAct[currCChIdx] = millis();
+      }
     }
 
     if (((prev_ISR1 & 0x03)!=0x03) && ((curr_ISR1 & 0x03)==0x03)) {
@@ -795,7 +831,7 @@ int txSendSync(uint8_t chIDX, uint8_t frags, uint8_t iniTTL, uint8_t curTTL)
   mBuf[2] = iniTTL;
   mBuf[3] = curTTL;
   
-  setCtrlChan();  // jump to a control channel
+  setCtrlChanTX();  // jump to a FREE control channel
 
   LOGI("TX CCh=%02d SYNC(1): chIDX=%d, frags=%d, iniTTL=%d, curTTL=%d", 
         currChan, chIDX, frags, iniTTL, curTTL);
@@ -814,7 +850,7 @@ int txSendAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
   mBuf[2] |= (iniTTL & 0x0f);
   mBuf[3] = curTTL;
 
-  setCtrlChan();  // jump to a control channel
+  setCtrlChanTX();  // jump to a FREE control channel
 
   LOGI("TX CCh=%02d ACK (3): hash=0x%04x, hops=%d, iniTTL=%d, curTTL=%d", 
         currChan, hashID, hops, iniTTL, curTTL);
