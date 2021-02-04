@@ -34,16 +34,10 @@ mesh network.
 - assemble radio packets with header and error correction codes
 - generate ACK, SYNC, DATA payloads with correct formats
 - packetize and send large messages up to 255 bytes
+- (incomplete WIP) control channel listen-before-talk
 
-### TODO - not yet implemented:
-- listen-before-transmit control channel sensing
-- RSSI reading
-- better documentation
-- relay/mesh functionality
-- better buffer overflow protection
-- clean up the RX flow (refactor as FSM?)
-- use interrupts instead of polling
-- optimize power usage
+### relay/mesh capability:
+- not currently implemented
 
 ## Interop testing
 The software is tested for interoperation with:
@@ -122,7 +116,7 @@ These objects can be further processed on the computer using a Python or PERL
 script to study the format of the packets and extract useful information.
 
 ### Test console
-Documented inside the playHard.h file and subject to continuous change.
+Documented inside the `playHarder.h` file and subject to continuous change.
 
 ## Documentation and further info
 All technical information relevant to this project is (or will be) published 
