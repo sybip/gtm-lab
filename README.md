@@ -37,7 +37,7 @@ mesh network.
 - (incomplete WIP) control channel listen-before-talk
 
 ### relay/mesh capability:
-- not currently implemented
+- not implemented currently
 
 ## Interop testing
 The software is tested for interoperation with:
