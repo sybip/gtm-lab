@@ -109,6 +109,9 @@ uint8_t TXFRAGSIZE = 90;   // it's what they use
 #define RX_MIN_LEN 10   // min
 #define RX_MAX_LEN 200  // max
 
+// message hash ringbuffer size, for duplicate detection
+// there will be 3 of these: ACK RX, Msg RX and Msg TX
+#define HASH_BUF_LEN 64
 
 #define FXOSC 32E6  // 32MHz
 
@@ -130,6 +133,14 @@ uint8_t packetBuf[512];   // "a CVE waiting to happen"
 int packetLen=0;
 int radioLen=0;
 int wantLen=0;
+
+// Msg hash ringbuffers
+uint16_t rxAckBuf[HASH_BUF_LEN] = { 0 };
+uint16_t rxMsgBuf[HASH_BUF_LEN] = { 0 };
+uint16_t txMsgBuf[HASH_BUF_LEN] = { 0 };
+uint8_t rxAckPos = 0;
+uint8_t rxMsgPos = 0;
+uint8_t txMsgPos = 0;
 
 // Useful values from last sync packet
 uint8_t wantFrags=0; // Number of fragments we expect
@@ -240,6 +251,17 @@ void dumpRegisters(int logLevel)
         "0x%02x | 0x%02x | "BYTE_TO_BINARY_PATTERN, i, rVal, BYTE_TO_BINARY(rVal));      
     }
   }
+}
+
+
+// Look up a hash in one of the hash ringbuffers
+bool inRingBuf(uint16_t needle, uint16_t *haystack)
+{
+  for (int i = 0; i < HASH_BUF_LEN; i++) {
+    if (haystack[i] == needle)
+      return true;
+  }
+  return false;
 }
 
 
@@ -642,15 +664,32 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
 
   } else if (rxBuf[1] == PKT_TYPE_ACK) {
     // ACK packet, indicates the successful delivery of a P2P message
+    msgH16 = (rxBuf[2]<<8)+rxBuf[3];
     LOGI("%s ACK (3): hash=0x%04x, hops=%d, iniTTL=%d, curTTL=%d",
-      chanDesc, (rxBuf[2]<<8)+rxBuf[3], 
+      chanDesc, msgH16, 
       (rxBuf[4]>>4), (rxBuf[4] & 0x0f), rxBuf[5]);
 
-    // output in standardized format
-    printf("RX_ACK:");
-    for (int i=2; i<rxLen; i++)
-      printf("%02x", rxBuf[i]);
-    printf("\n");
+    if (inRingBuf(msgH16, rxAckBuf)) {
+      LOGI("ACK SEEN BEFORE");
+    } else {
+      rxAckBuf[rxAckPos++] = msgH16;
+      rxAckPos %= HASH_BUF_LEN;
+
+      // what's this ACK for?
+      if (inRingBuf(msgH16, txMsgBuf)) {
+        LOGI("ACK for TXd MSG");
+      } else if (inRingBuf(msgH16, rxMsgBuf)) {
+        LOGI("ACK for RXd MSG");
+      } else {
+        LOGI("ACK without MSG");        
+      }
+
+      // output in standardized format
+      printf("RX_ACK:");
+      for (int i=2; i<rxLen; i++)
+        printf("%02x", rxBuf[i]);
+      printf("\n");
+    }
     resetState();
 
   } else if (rxBuf[1] == PKT_TYPE_DATA) {
@@ -669,12 +708,18 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
       msgH16 = msgHash16(packetBuf);
       LOGI("RX complete: len=%d, hash=0x%04x, time=%dms", packetLen, msgH16, (millis()-dataStart));
 
-      // output in standardized format (inittl, curttl, | ,hexmsg)
-      printf("RX_MSG:");
-      printf("%02x%02x|", lastIniTTL, lastCurTTL);
-      for (int i=0; i<packetLen; i++)
-        printf("%02x", packetBuf[i]);
-      printf("\n");
+      if (inRingBuf(msgH16, rxMsgBuf)) {
+        LOGI("MSG SEEN BEFORE");
+      } else {
+        rxMsgBuf[rxMsgPos++] = msgH16;
+        rxMsgPos %= HASH_BUF_LEN;
+        // output in standardized format (inittl, curttl, | ,hexmsg)
+        printf("RX_MSG:");
+        printf("%02x%02x|", lastIniTTL, lastCurTTL);
+        for (int i=0; i<packetLen; i++)
+          printf("%02x", packetBuf[i]);
+        printf("\n");
+      }
       packetLen=0;
       // will reset buffers, hop to cch and start scanning
       resetState();
@@ -873,6 +918,10 @@ int txSendMsg(uint8_t * mBuf, uint8_t mLen, uint8_t iniTTL, uint8_t curTTL)
   // calculate message hash
   uint16_t msgH16 = msgHash16(mBuf);
   LOGI("TX start: len=%d, hash=0x%04x, frags=%d", mLen, msgH16, nFrags);
+
+  // save to ringbuffer
+  txMsgBuf[txMsgPos++] = msgH16;
+  txMsgPos %= HASH_BUF_LEN;
 
   // pick a random data channel
   currDChIdx = random(sizeof(dataChans)-1);
