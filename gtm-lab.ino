@@ -152,8 +152,8 @@ unsigned long dataStart=0;  // millis when data RX started
 unsigned long lastHop=0;    // millis when we last hopped channel
 
 // Interrupt Status Registers - stored previous values
-uint8_t prev_ISR1=0;
-uint8_t prev_ISR2=0;
+uint8_t prev_IRQ1=0;
+uint8_t prev_IRQ2=0;
 
 // Serial console buffer
 char conBuf[256];
@@ -252,9 +252,9 @@ void setChan(uint8_t chan)
 
   bool locked = false;
   while(!locked) {
-    uint8_t curr_ISR1 = LoRa.readRegister(REG_IRQ_FLAGS_1);
+    uint8_t curr_IRQ1 = LoRa.readRegister(REG_IRQ_FLAGS_1);
     // MODEREADY | PLLLOCK = 0b10010000
-    if ((curr_ISR1 & 0x90) == 0x90)
+    if ((curr_IRQ1 & 0x90) == 0x90)
       locked = true;
   }
 
@@ -286,13 +286,16 @@ void setCtrlChan()
 
 
 // Tune to a FREE control channel **for TX**
-// This is early draft work and will require further refinement
+// This is early draft and will require further work
+//  to achieve true listen-before-transmit capability
 void setCtrlChanTX()
 {
-  // Find a channel that has been last active at least CCH_SILENCE (40ms) ago
-  // Where "last active" is defined as the greatest of:
+  // Find a channel that has been last active at least CCH_SILENCE ago
+  // Where "last active" is defined as the latest of:
   // - time last preamble detected
   // - time we (re)started cch scanning
+  // CCH_SILENCE is approx the time it takes to TX a packet (40ms)
+
   int sinceActive = 0;
 
   for (int i=0; i < sizeof(ctrlChans); i++) {
@@ -304,7 +307,6 @@ void setCtrlChanTX()
       break;
   }
 
-  // LOGD("LAST_ACT(%d): %dms", currCChIdx, millis() - lastCChAct[currCChIdx]);
   setChan(ctrlChans[currCChIdx]);
 }
 
@@ -429,32 +431,32 @@ void gtmlabSetup()
 void gtmlabLoop()
 {
   char rx_byte = 0;
-  uint8_t curr_ISR1=0;
-  uint8_t curr_ISR2=0;
+  uint8_t curr_IRQ1=0;
+  uint8_t curr_IRQ2=0;
 
-  // Read ISR registers once
-  curr_ISR2 = LoRa.readRegister(REG_IRQ_FLAGS_2);
-  curr_ISR1 = LoRa.readRegister(REG_IRQ_FLAGS_1);
+  // Read IRQ registers once
+  curr_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2);
+  curr_IRQ1 = LoRa.readRegister(REG_IRQ_FLAGS_1);
 
-  if (curr_ISR1 & 0x02)  // Preamble detected, stay on channel
+  if (curr_IRQ1 & 0x02)  // Preamble detected, stay on channel
       scanning = false;
 
-  if ((curr_ISR1 != prev_ISR1) || (curr_ISR2 != prev_ISR2)) {
-    // Something changed in the ISR registers
+  if ((curr_IRQ1 != prev_IRQ1) || (curr_IRQ2 != prev_IRQ2)) {
+    // Something changed in the IRQ registers
 
     LOGV("%s-%s-%s",
-          (curr_ISR1 & 0x02) ? "PR":"--",
-          (curr_ISR1 & 0x01) ? "SW":"--",
-          (curr_ISR2 & 0x04) ? "PL":"--");          
+          (curr_IRQ1 & 0x02) ? "PR":"--",
+          (curr_IRQ1 & 0x01) ? "SW":"--",
+          (curr_IRQ2 & 0x04) ? "PL":"--");          
 
     LOGV("IRQs: "BYTE_TO_BINARY_PATTERN" "BYTE_TO_BINARY_PATTERN, 
-             BYTE_TO_BINARY(curr_ISR1),
-             BYTE_TO_BINARY(curr_ISR2));
+             BYTE_TO_BINARY(curr_IRQ1),
+             BYTE_TO_BINARY(curr_IRQ2));
 
     // First check preamble, then syncword, then payready
     // The order is IMPORTANT - that's why we need a FSM
 
-    if (((prev_ISR1 & 0x02)!=0x02) && ((curr_ISR1 & 0x02)==0x02)) {
+    if (((prev_IRQ1 & 0x02)!=0x02) && ((curr_IRQ1 & 0x02)==0x02)) {
       LOGD("PREAMBLE (t=0)");
       pktStart=millis();
       if (!recvData) {
@@ -463,7 +465,7 @@ void gtmlabLoop()
       }
     }
 
-    if (((prev_ISR1 & 0x03)!=0x03) && ((curr_ISR1 & 0x03)==0x03)) {
+    if (((prev_IRQ1 & 0x03)!=0x03) && ((curr_IRQ1 & 0x03)==0x03)) {
       if (! pktStart) {
         // missed the preamble, but it's OK, start the timer now
         pktStart=millis();
@@ -474,7 +476,7 @@ void gtmlabLoop()
       scanning = false;   // Stay on channel
     }
 
-    if (((prev_ISR2 & 0x04)!=0x04) && ((curr_ISR2 & 0x04)==0x04)) {
+    if (((prev_IRQ2 & 0x04)!=0x04) && ((curr_IRQ2 & 0x04)==0x04)) {
       if (pktStart) {
         LOGD("PAYREADY (t=%d)", (millis()-pktStart));
       } else {
@@ -484,8 +486,8 @@ void gtmlabLoop()
       }
     }
 
-    if (((prev_ISR1 & 0x03)==0x03) && ((curr_ISR1 & 0x03)!=0x03)) {
-      if ((radioLen > 0) && !((curr_ISR2 & 0x04)==0x04)) {
+    if (((prev_IRQ1 & 0x03)==0x03) && ((curr_IRQ1 & 0x03)!=0x03)) {
+      if ((radioLen > 0) && !((curr_IRQ2 & 0x04)==0x04)) {
         // lost sync while receiving packet - NOT GOOD
         LOGI("LOSTSYNC at pos %d/%d, t=%d", radioLen-1, radioBuf[0], (millis()-pktStart));
         resetState();
@@ -494,22 +496,22 @@ void gtmlabLoop()
     }
 
     // store values as "previous"
-    prev_ISR1=curr_ISR1;
-    prev_ISR2=curr_ISR2;
+    prev_IRQ1=curr_IRQ1;
+    prev_IRQ2=curr_IRQ2;
   }
 
-  if(((curr_ISR1 & 0x03)==0x03) && 
-     ((curr_ISR2 & 0x20) || !(curr_ISR2 & 0x40))) {
+  if(((curr_IRQ1 & 0x03)==0x03) && 
+     ((curr_IRQ2 & 0x20) || !(curr_IRQ2 & 0x40))) {
     radioBuf[radioLen] = LoRa.readRegister(REG_FIFO);
     // LOGV("< %02x", radioBuf[radioLen]);
     radioLen++;
 
     // if ((radioLen>0) && (radioLen>radioBuf[0])) {  // first byte is len
-    // use PAYLOAD_READY ISR2 bit instead
-    if ((curr_ISR2 & 0x04)==0x04) {
+    // use PAYLOAD_READY IRQ2 bit instead
+    if ((curr_IRQ2 & 0x04)==0x04) {
       // There may still be some unread payload in the fifo, so
       //   keep reading fifo until fifoempty
-      while (!((curr_ISR2 = LoRa.readRegister(REG_IRQ_FLAGS_2)) & 0x40)) {
+      while (!((curr_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2)) & 0x40)) {
         radioBuf[radioLen] = LoRa.readRegister(REG_FIFO);
         LOGV("< %02x", radioBuf[radioLen]);
         radioLen++;
@@ -721,7 +723,7 @@ int txStart()
 //   via txEncodeAndSend(), or one of the txSend(Ack|Sync|Msg) functions
 int txPacket(uint8_t *txBuf, uint8_t txLen, bool isCtrl)
 {
-  uint8_t curr_ISR2=0;
+  uint8_t curr_IRQ2=0;
   unsigned long txStart;  // millis when data TX started
   
   LOGD("TX START");
@@ -749,10 +751,10 @@ int txPacket(uint8_t *txBuf, uint8_t txLen, bool isCtrl)
     // to avoid an overrun, stop loading any more bytes until
     //   FIFO level drops below threshold
     while(fifoLevel >= FIFOSIZE) {
-      // read ISR until "fifo above threshold" bit clears
-      curr_ISR2 = LoRa.readRegister(REG_IRQ_FLAGS_2);
-      if(curr_ISR2 & 0x20) {  // fifolevel
-        LOGV("ISR2=%02x", curr_ISR2);
+      // read IRQ until "fifo above threshold" bit clears
+      curr_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2);
+      if(curr_IRQ2 & 0x20) {  // fifolevel
+        LOGV("IRQ2=%02x", curr_IRQ2);
       } else {
         fifoLevel = FIFOTHRE;
       }
