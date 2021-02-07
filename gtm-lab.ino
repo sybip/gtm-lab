@@ -162,6 +162,9 @@ unsigned long pktStart=0;   // millis when packet RX started
 unsigned long dataStart=0;  // millis when data RX started
 unsigned long lastHop=0;    // millis when we last hopped channel
 
+// RSSI, keep it simple
+uint8_t pktRSSI = 0;  // absolute value; RSSI = -RssiValue/2[dBm]
+
 // Interrupt Status Registers - stored previous values
 uint8_t prev_IRQ1=0;
 uint8_t prev_IRQ2=0;
@@ -360,6 +363,12 @@ void resetState()
   for (int i=0; i<4; i++)
     lastCChAct[i] = millis();
 
+#if 1
+  // reset FIFO
+  while (!((LoRa.readRegister(REG_IRQ_FLAGS_2)) & 0x40))
+    LoRa.readRegister(REG_FIFO);
+#endif
+
   setCtrlChan();
 }
 
@@ -531,6 +540,9 @@ void gtmlabLoop()
     // if ((radioLen>0) && (radioLen>radioBuf[0])) {  // first byte is len
     // use PAYLOAD_READY IRQ2 bit instead
     if ((curr_IRQ2 & 0x04)==0x04) {
+      // Read RSSI ASAP
+      pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
+
       // There may still be some unread payload in the fifo, so
       //   keep reading fifo until fifoempty
       while (!((curr_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2)) & 0x40)) {
@@ -539,7 +551,7 @@ void gtmlabLoop()
         radioLen++;
       }
 
-      LOGD("rxLen=%d (t=%d)", radioLen, (millis()-pktStart));
+      LOGD("rxLen=%d, RSSI=-%d (t=%d)", radioLen, (pktRSSI>>1), (millis()-pktStart));
 
       ESP_LOG_BUFFER_HEXDUMP(TAG, radioBuf, radioLen, ESP_LOG_VERBOSE);
       if ((radioLen >= RX_MIN_LEN) && (radioLen <= RX_MAX_LEN)) {
@@ -550,7 +562,9 @@ void gtmlabLoop()
           // Packet OK, send it for further processing
           rxPacket(radioDec, radioLen-8);
         } else {
-          LOGD("REEDSOLO FAIL");          
+          LOGD("REEDSOLO FAIL");  // bail out
+          resetState();
+          return;
         }
       } else {
         LOGD("Invalid rxLen");
@@ -567,7 +581,9 @@ void gtmlabLoop()
   //  it never will; reset state immediately to hopefully
   //  pick up a retransmission
   if ((pktStart > 0) && (millis()-pktStart > PKT_TIMEOUT)) {
-    LOGI("PKTSTALL (t=%d)", millis()-pktStart);
+    // Read RSSI (debug purposes only)
+    pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
+    LOGI("PKTSTALL RSSI=-%d (t=%d)", pktRSSI>>1, millis()-pktStart);
     resetState();
   }
 
@@ -719,6 +735,11 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
         for (int i=0; i<packetLen; i++)
           printf("%02x", packetBuf[i]);
         printf("\n");
+
+        // Is this an echo of a message that we sent?
+        if (inRingBuf(msgH16, txMsgBuf)) {
+          LOGI("MSG SENT BEFORE");
+        }
       }
       packetLen=0;
       // will reset buffers, hop to cch and start scanning
