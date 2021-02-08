@@ -116,6 +116,7 @@ uint8_t TXFRAGSIZE = 90;   // it's what they use
 #define FXOSC 32E6  // 32MHz
 
 // Radio packet types
+#define PKT_TYPE_TIME 0
 #define PKT_TYPE_SYNC 1
 #define PKT_TYPE_DATA 2
 #define PKT_TYPE_ACK  3
@@ -442,7 +443,7 @@ void gtmlabSetup()
   LoRa.writeRegister(REG_PLL_HOP, (0x2d | 0x80));
 
   // Set Tx power
-  LoRa.setTxPower(17);  // safe
+  LoRa.setTxPower(10);  // safer (10mW = 10dbm)
 
   // Start RX mode
   LoRa.writeRegister(REG_OP_MODE, MODE_RX_CONTINUOUS);
@@ -678,6 +679,11 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
       dataStart = millis();
       recvData = true;
 
+  } else if (rxBuf[1] == PKT_TYPE_TIME) {
+    // TIME packet, log for now but don't act
+    uint32_t tStamp = (rxBuf[2]<<24)+(rxBuf[3]<<16)+(rxBuf[4]<<8)+rxBuf[5];
+    LOGI("%s TIME(0): time=0x%08x", chanDesc, tStamp);
+
   } else if (rxBuf[1] == PKT_TYPE_ACK) {
     // ACK packet, indicates the successful delivery of a P2P message
     msgH16 = (rxBuf[2]<<8)+rxBuf[3];
@@ -877,8 +883,8 @@ int txEncodeAndSend(uint8_t * pktBuf, uint8_t pktLen, uint8_t pktType)
   rs.begin(pktLen, 1);
   rs.Encode(radioBuf, radioBuf);
 
-  // SYNC and ACK are control packets (require long preamble)
-  if ((pktType == PKT_TYPE_SYNC) || (pktType == PKT_TYPE_ACK)) {
+  // SYNC, ACK and TIME are control packets (require long preamble)
+  if (pktType != PKT_TYPE_DATA) {
     isCtrl = true;
   }
 
@@ -924,6 +930,25 @@ int txSendAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
         currChan, hashID, hops, iniTTL, curTTL);
   txEncodeAndSend(mBuf, 4, PKT_TYPE_ACK);
 }
+
+
+// Send a TIME packet
+// (will set channel; expects TX mode on)
+int txSendTime(uint64_t time32)
+{
+  uint8_t mBuf[4];
+  // timestamp
+  mBuf[0] = (time32 >> 24) & 0xff;
+  mBuf[1] = (time32 >> 16) & 0xff;
+  mBuf[2] = (time32 >> 8) & 0xff;
+  mBuf[3] = time32 & 0xff;
+
+  setCtrlChanTX();  // jump to a FREE control channel
+
+  LOGI("TX CCh=%02d TIME(0): 0x%08x", currChan, time32);
+  txEncodeAndSend(mBuf, 4, PKT_TYPE_TIME);
+}
+
 
 
 // Send a message
