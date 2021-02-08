@@ -48,6 +48,7 @@
 #define REG_FDEV_MSB             0x04
 #define REG_FDEV_LSB             0x05
 #define REG_PA_RAMP              0x0a
+#define REG_RSSI_VALUE           0x11
 #define REG_RX_BW                0x12
 #define REG_PREAMBLE_DETECT      0x1f
 #define REG_FSK_PREAMBLE_MSB     0x25
