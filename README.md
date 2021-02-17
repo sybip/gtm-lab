@@ -25,16 +25,16 @@ mesh network.
 ### RX capability:
 - channel hopping
 - preamble and syncword detection
-- control channel scanning with adjustable dwell time
+- control channel scanning
 - error correction
 - control packet (SYNC/ACK) reception
 - data packet reception and reassembly
 
 ### TX capability:
 - assemble radio packets with header and error correction codes
-- generate ACK, SYNC, DATA payloads with correct formats
+- generate ACK, SYNC, DATA, TIME payloads with correct formats
 - packetize and send large messages up to 255 bytes
-- (incomplete WIP) control channel listen-before-talk
+- control channel listen-before-talk
 
 ### relay/mesh capability:
 - not implemented currently
@@ -120,8 +120,8 @@ Documented inside the `playHarder.h` file and subject to continuous change.
 
 ## Documentation and further info
 All technical information relevant to this project is (or will be) published 
-in the [pyGT project wiki](https://github.com/sybip/pyGT/wiki/), and of course 
-everyone's welcome to share their findings if they want to.
+under a copyleft license in the [pyGT project wiki](https://github.com/sybip/pyGT/wiki/), 
+and of course everyone's invited to share their findings if they want to.
 
 No Github account? - no problem! Just shoot a bitmessage to the author at 
 BM-2cW2P5qmucxH4jWP2JEyqKA12VhTJibUXL .
