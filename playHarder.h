@@ -20,7 +20,7 @@
 
 // Assembles and sends a "shout" message with the supplied string as message body
 // (thanks to https://gitlab.com/almurphy for the Arduino implementation)
-int testShoutTx(char * msgBody)
+int testShoutTx(char * msgBody, bool direct = false)
 {
   uint32_t time32 = now();
   uint8_t mData[256];  // message buffer (for a small message)
@@ -92,16 +92,22 @@ int testShoutTx(char * msgBody)
 
   ESP_LOG_BUFFER_HEXDUMP(TAG, mData, mPos, ESP_LOG_DEBUG);
 
-  // fire up the TX
-  txStart();
+  if (direct) {
+    // SEND DIRECTLY (don't "Listen-Before")
+    // fire up the TX
+    txStart();
+    // send the message (this will also generate and send the SYNC)
+    txSendMsg(mData, mPos, 3, 2);
+    // finally return to RX mode
+    resetState();  // return to RX mode with a clean slate
+    LOGI("TX COMPLETE");
 
-  // send the message (this will also generate and send the SYNC)
-  txSendMsg(mData, mPos, 2, 2);
+  } else {
+    // SEND VIA NEW RINGBUFFER (Listen-Before etc)
+    txEnQueueMSG(mData, mPos, 3, 2);
+    LOGI("TX QUEUED");
+  }
 
-  // finally return to RX mode
-  resetState();  // return to RX mode with a clean slate
-
-  LOGI("TX COMPLETE", mPos);
 }
 
 
@@ -277,14 +283,23 @@ int conExec()
   } else if (conBuf[1] == 't') {
     if (conBuf[2] == 'a') {
       // TEST/ACK - send an ACK packet for a randomly generated HashID
-
       txStart();    // fire up transmitter
       txSendAck(random(65535), 1, 3, 2);
+      resetState(); // return to RX mode
+
+    } else if (conBuf[2] == 't') {
+      // TEST/TIME - send a TIME packet
+      txStart();    // fire up transmitter
+      txSendTime(0x60201337);
       resetState(); // return to RX mode
 
     } else if (conBuf[2] == 'm') {
       // TEST/MSG - send a random message
       testMessage();
+
+    } else if (conBuf[2] == 'x') {
+      // TEST/X - test ACK sending from main loop with LBT
+      txEnQueueACK(random(65535), 1, 3, 2);
     }
 
   } else {

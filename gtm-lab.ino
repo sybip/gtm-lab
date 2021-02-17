@@ -165,6 +165,7 @@ unsigned long lastHop=0;    // millis when we last hopped channel
 
 // RSSI, keep it simple
 uint8_t pktRSSI = 0;  // absolute value; RSSI = -RssiValue/2[dBm]
+uint8_t cChRSSI = 0;  // control chan RSSI (for LBT)
 
 // Interrupt Status Registers - stored previous values
 uint8_t prev_IRQ1=0;
@@ -173,6 +174,33 @@ uint8_t prev_IRQ2=0;
 // Serial console buffer
 char conBuf[256];
 uint16_t conLen=0;
+
+// short-term buffers for queuing outbound messages 
+//   while waiting for a clear channel to transmit
+// buffer sizes are unscientific broad estimates
+#define MSG_QUEUE_SIZE 6
+#define ACK_QUEUE_SIZE 6
+
+struct msgDesc {
+  uint8_t iniTTL;
+  uint8_t curTTL;
+  uint16_t hashID;
+  uint16_t msgLen;
+  uint8_t msgObj[500];  // FIXME explain
+};
+
+struct ackDesc {
+  uint8_t iniTTL;
+  uint8_t curTTL;
+  uint16_t hashID;
+  uint8_t hops;
+};
+
+msgDesc msgQueue[MSG_QUEUE_SIZE];
+ackDesc ackQueue[ACK_QUEUE_SIZE];
+
+uint8_t msgQHead = 0, msgQTail = 0;
+uint8_t ackQHead = 0, ackQTail = 0;
 
 
 // Binary output macros
@@ -311,6 +339,7 @@ void setCtrlChan()
 }
 
 
+#if 0  // This is no longer used, replaced with RSSI-based LBT
 // Tune to a FREE control channel **for TX**
 // This is early draft and will require further work
 //  to achieve true listen-before-transmit capability
@@ -335,6 +364,7 @@ void setCtrlChanTX()
 
   setChan(ctrlChans[currCChIdx]);
 }
+#endif
 
 
 // Reset receiver soft buffers and state variables
@@ -586,11 +616,38 @@ void gtmlabLoop()
     pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
     LOGI("PKTSTALL RSSI=-%d (t=%d)", pktRSSI>>1, millis()-pktStart);
     resetState();
+    return;
   }
 
   if (scanning && !recvData) {
     // if scanning, hop to next chan every SCAN_DWELL millis
     if ((millis()-lastHop) > SCAN_DWELL) {
+      cChRSSI = LoRa.readRegister(REG_RSSI_VALUE);
+      // At this point, we're on a control channel that's not receiving anything;
+      // read RSSI, and if channel clear, STAY ON CHANNEL and
+      // send any queued transmission
+      if (cChRSSI > 160) {  // silence level -80dBi, FIXME explain this
+          if (msgQueue[msgQTail].curTTL > 0) {
+            LOGI("CCh=%d(%d), RSSI=-%d, can TX MSG(pos:%d)", 
+                 currCChIdx, currChan, (cChRSSI>>1), msgQTail);
+            txStart();
+            txSendMsg(msgQueue[msgQTail].msgObj, msgQueue[msgQTail].msgLen, 
+                      msgQueue[msgQTail].iniTTL, msgQueue[msgQTail].curTTL);
+            memset(&(msgQueue[msgQTail]), 0, sizeof(struct msgDesc));
+            msgQTail = (msgQTail+1) % MSG_QUEUE_SIZE;
+            resetState();
+          } else if (ackQueue[ackQTail].curTTL > 0) {
+            LOGI("CCh=%d(%d), RSSI=-%d, can TX ACK(pos:%d)", 
+                 currCChIdx, currChan, (cChRSSI>>1), ackQTail);
+            txStart();
+            txSendAck(ackQueue[ackQTail].hashID, ackQueue[ackQTail].hops, 
+                      ackQueue[ackQTail].iniTTL, ackQueue[ackQTail].curTTL);
+            memset(&(ackQueue[ackQTail]), 0, sizeof(struct ackDesc));
+            ackQTail = (ackQTail+1) % ACK_QUEUE_SIZE;
+            resetState();
+          }
+      }
+      // otherwise, just HOP
       setCtrlChan();
       lastHop = millis();
     }
@@ -785,6 +842,10 @@ int txStart()
 }
 
 
+// WARNING: txPacket, txEncodeAndSend and txSend(Ack|Sync|Msg) are
+//  not collision-resistant; production applications should use the
+//  txEnQueue* functions instead
+
 // Transmit a packet of size txLen, from txBuf
 // The data is sent as-is; any envelope, correction codes etc are the 
 //   responsibility of the caller
@@ -905,7 +966,8 @@ int txSendSync(uint8_t chIDX, uint8_t frags, uint8_t iniTTL, uint8_t curTTL)
   mBuf[2] = iniTTL;
   mBuf[3] = curTTL;
   
-  setCtrlChanTX();  // jump to a FREE control channel
+  // CCH already set from main loop, just stay on it
+  setChan(ctrlChans[currCChIdx]); 
 
   LOGI("TX CCh=%02d SYNC(1): chIDX=%d, frags=%d, iniTTL=%d, curTTL=%d", 
         currChan, chIDX, frags, iniTTL, curTTL);
@@ -924,7 +986,9 @@ int txSendAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
   mBuf[2] |= (iniTTL & 0x0f);
   mBuf[3] = curTTL;
 
-  setCtrlChanTX();  // jump to a FREE control channel
+  // setCtrlChanTX();  // jump to a FREE control channel
+  // CCH already set from main loop, just stay on it
+  setChan(ctrlChans[currCChIdx]); 
 
   LOGI("TX CCh=%02d ACK (3): hash=0x%04x, hops=%d, iniTTL=%d, curTTL=%d", 
         currChan, hashID, hops, iniTTL, curTTL);
@@ -943,7 +1007,8 @@ int txSendTime(uint64_t time32)
   mBuf[2] = (time32 >> 8) & 0xff;
   mBuf[3] = time32 & 0xff;
 
-  setCtrlChanTX();  // jump to a FREE control channel
+  // CCH already set from main loop, just stay on it
+  setChan(ctrlChans[currCChIdx]); 
 
   LOGI("TX CCh=%02d TIME(0): 0x%08x", currChan, time32);
   txEncodeAndSend(mBuf, 4, PKT_TYPE_TIME);
@@ -1009,4 +1074,35 @@ int txSendMsg(uint8_t * mBuf, uint8_t mLen, uint8_t iniTTL, uint8_t curTTL)
     while (!LoRa.readRegister(REG_IRQ_FLAGS_2) & 0x40);  // wait for FifoEmpty
     delay(txPackDelay);  // wait for others
   }
+}
+
+// The functions below push an outbound object into the relevant
+//  outbound queue, to be transmitted as soon as the channel is clear
+// Applications requiring collision avoidance (really ALL production
+//  applications) should use these functions to transmit messages
+//  instead of calling txSend(Ack|Sync|Msg) directly
+
+// Queue a message for sending (when channel is clear)
+bool txEnQueueMSG(uint8_t * msgObj, uint8_t msgLen, uint8_t iniTTL, uint8_t curTTL)
+{
+  msgQueue[msgQHead].iniTTL = iniTTL;
+  msgQueue[msgQHead].curTTL = curTTL;
+  msgQueue[msgQHead].msgLen = msgLen;
+  memcpy(msgQueue[msgQHead].msgObj, msgObj, msgLen);
+  msgQHead = (msgQHead+1) % MSG_QUEUE_SIZE;
+
+  return true;
+}
+
+
+// Queue an ACK for sending (when channel is clear)
+bool txEnQueueACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
+{
+  ackQueue[ackQHead].iniTTL = iniTTL;
+  ackQueue[ackQHead].curTTL = curTTL;
+  ackQueue[ackQHead].hashID = hashID;
+  ackQueue[ackQHead].hops = hops;
+  ackQHead = (ackQHead+1) % ACK_QUEUE_SIZE;
+
+  return true;
 }
