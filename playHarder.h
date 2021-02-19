@@ -104,8 +104,11 @@ int testShoutTx(char * msgBody, bool direct = false)
 
   } else {
     // SEND VIA NEW RINGBUFFER (Listen-Before etc)
-    txEnQueueMSG(mData, mPos, 3, 2);
-    LOGI("TX QUEUED");
+    if (txEnQueueMSG(mData, mPos, 3, 2)) {
+      LOGI("TX QUEUED");
+    } else {
+      LOGI("TX DROPPED (buffer full)");
+    }
   }
 
 }
@@ -152,23 +155,34 @@ int conExec()
   //  !li = set logging level to INFO
   //  !lw = set logging level to WARNING
   //  !le = set logging level to ERROR
-  //  !m0 = set SLEEP mode
-  //  !m1 = set STANDBY mode
-  //  !mr = set RX mode
-  //  !mt = set TX mode
+  //  -----
+  //  !m0 = set radio SLEEP mode
+  //  !m1 = set radio STANDBY mode
+  //  !mr = set radio RX mode
+  //  !mt = set radio TX mode
   //    (all !m commands will also pause chan scanning)
-  //  !ra = dump ALL registers (changed from !rr)
-  //  !ri = dump ISR registers
-  //  !rf = dump entire FIFO content
-  //      (use !r00 to read one FIFO byte)
-  //  !rrXX = read register XX (in HEX)
+  //  -----
+  //  !r0 = set mesh relay function OFF
+  //  !r1 = set mesh relay function ON
+  //  -----
+  //  !da = dump ALL radio registers
+  //  !di = dump ISR registers
+  //  !df = dump entire FIFO content
+  //      (use !dr00 to read one FIFO byte)
+  //  !drXX = dump register XX (in HEX)
+  //  -----
   //  !wXXYY = write to register XX value YY
   //      (XX and YY in HEX)
+  //  -----
   //  !cDD = change channel (DD in decimal)
+  //  -----
   //  !h0 = control chan scanning pause
   //  !h1 = control chan scanning resume
-  //  !ta = transmit a random ACK packet
-  //  !tm = transmit a random shout message
+  //  -----
+  //  !ta = transmit a random ACK packet directly
+  //  !tt = transmit a TIME packet directly
+  //  !tx = transmit a random ACK packet using queue
+  //  !tm = transmit a random shout using queue
   //
   if (conBuf[1] == 'l') {
     if (conBuf[2] == 'v') {
@@ -187,6 +201,7 @@ int conExec()
       esp_log_level_set("*", ESP_LOG_ERROR);
       LOGI("SET_LOG: ERROR");
     }
+
   } else if (conBuf[1] == 'm') {
     scanning = false;
     LOGI("SCANNING is now OFF ('!h1' to resume)");
@@ -220,6 +235,14 @@ int conExec()
     }
     LOGI("SCANNING is now %s", (scanning ? "ON":"OFF"));
 
+  } else if (conBuf[1] == 'r') {
+    if (conBuf[2] == '0') {
+      relaying = false;
+    } else if (conBuf[2] == '1') {
+      relaying = true;
+    }
+    LOGI("RELAYING is now %s", (relaying ? "ON":"OFF"));
+
   } else if (conBuf[1] == 'c') {
       memcpy(hexBuf, conBuf+2, 2);
       xChan = strtoul(hexBuf, NULL, 10) & 0xff;
@@ -232,14 +255,14 @@ int conExec()
         setChan(xChan);
       }
 
-  } else if (conBuf[1] == 'd') {
+  } else if (conBuf[1] == 's') {
     if (conBuf[2] == 'd') {
       memcpy(hexBuf, conBuf+3, 2);
       txPackDelay = strtoul(hexBuf, NULL, 10) & 0xff;
       LOGI("PACKDELAY now %dms", txPackDelay);
     }
 
-  } else if (conBuf[1] == 'r') {
+  } else if (conBuf[1] == 'd') {
     // VIEW
     if (conBuf[2] == 'a') {
       // READ ALL REGISTERS
@@ -263,6 +286,7 @@ int conExec()
       printf("RECVDATA: %s\n", recvData ? "ON":"OFF");
       printf("INTXMODE: %s\n", inTXmode ? "ON":"OFF");
       printf("CURRCHAN: %d\n", currChan);
+      printf("RELAYING: %s\n", relaying ? "ON":"OFF");
 
     } else if (conBuf[2] == 'r') {
       memcpy(hexBuf, conBuf+3, 2);
@@ -299,7 +323,11 @@ int conExec()
 
     } else if (conBuf[2] == 'x') {
       // TEST/X - test ACK sending from main loop with LBT
-      txEnQueueACK(random(65535), 1, 3, 2);
+      if (txEnQueueACK(random(65535), 1, 3, 2)) {
+        LOGI("ACK QUEUED");
+      } else {
+        LOGI("ACK DROPPED (buffer full)");
+      }
     }
 
   } else {

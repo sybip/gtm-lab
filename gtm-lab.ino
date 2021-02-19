@@ -158,6 +158,8 @@ uint8_t currCChIdx = 0; // current ctrl chan INDEX in map
 // millis when last preamble detected on cChan
 unsigned long lastCChAct[4] = { 0, 0, 0, 0 };
 
+bool relaying = false;  // enable mesh relay function
+
 // Timing related variables
 unsigned long pktStart=0;   // millis when packet RX started
 unsigned long dataStart=0;  // millis when data RX started
@@ -763,6 +765,17 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
         LOGI("ACK without MSG");        
       }
 
+      // if first seen, and curTTL>1, it's a relayable ACK
+      if (rxBuf[5]>1) {
+        ////////// RELAYING //////////
+        LOGI("RELAYACK (%s)", (relaying ? "ON!":"OFF"));
+        if (relaying) {
+          // decrement curTTL and enqueue for TX
+          // FIXME catch error
+          txEnQueueACK(msgH16, (rxBuf[4]>>4), (rxBuf[4] & 0x0f), (rxBuf[5]-1));
+        }
+      }
+
       // output in standardized format
       printf("RX_ACK:");
       for (int i=2; i<rxLen; i++)
@@ -781,6 +794,7 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
     if (wantFrags) {
       // hop to next data channel to receive more fragments
       setDataChanX(++currDChIdx);
+
     } else {
       // no more frags; output packet and hop to control channel
       // ...but first, calculate GTH16 hash
@@ -802,6 +816,17 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
         // Is this an echo of a message that we sent?
         if (inRingBuf(msgH16, txMsgBuf)) {
           LOGI("MSG SENT BEFORE");
+        } else {
+          // if first seen, and curTTL>1, it's a relayable message
+          if (lastCurTTL>1) {
+            ////////// RELAYING //////////
+            LOGI("RELAYMSG (%s)", (relaying ? "ON!":"OFF"));
+            if (relaying) {
+              // decrement curTTL and enqueue for TX
+              // FIXME catch error
+              txEnQueueMSG(packetBuf, packetLen, lastIniTTL, (lastCurTTL-1));
+            }
+          }
         }
       }
       packetLen=0;
@@ -842,7 +867,7 @@ int txStart()
 }
 
 
-// WARNING: txPacket, txEncodeAndSend and txSend(Ack|Sync|Msg) are
+// WARNING: txPacket, txEncodeAndSend and txSend(Ack|Sync|Msg|Time) are
 //  not collision-resistant; production applications should use the
 //  txEnQueue* functions instead
 
@@ -1085,6 +1110,10 @@ int txSendMsg(uint8_t * mBuf, uint8_t mLen, uint8_t iniTTL, uint8_t curTTL)
 // Queue a message for sending (when channel is clear)
 bool txEnQueueMSG(uint8_t * msgObj, uint8_t msgLen, uint8_t iniTTL, uint8_t curTTL)
 {
+  if (msgQueue[msgQHead].curTTL>0) {
+    // buffer is full, retry later
+    return false;
+  }
   msgQueue[msgQHead].iniTTL = iniTTL;
   msgQueue[msgQHead].curTTL = curTTL;
   msgQueue[msgQHead].msgLen = msgLen;
@@ -1098,6 +1127,10 @@ bool txEnQueueMSG(uint8_t * msgObj, uint8_t msgLen, uint8_t iniTTL, uint8_t curT
 // Queue an ACK for sending (when channel is clear)
 bool txEnQueueACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
 {
+  if (msgQueue[msgQHead].curTTL>0) {
+    // buffer is full, retry later
+    return false;
+  }
   ackQueue[ackQHead].iniTTL = iniTTL;
   ackQueue[ackQHead].curTTL = curTTL;
   ackQueue[ackQHead].hashID = hashID;

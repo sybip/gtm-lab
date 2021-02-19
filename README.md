@@ -36,8 +36,8 @@ mesh network.
 - packetize and send large messages up to 255 bytes
 - control channel listen-before-talk
 
-### relay/mesh capability:
-- not implemented currently
+### Relay/mesh capability:
+- tentative implementation, more testing required
 
 ## Interop testing
 The software is tested for interoperation with:
