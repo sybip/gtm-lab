@@ -43,52 +43,70 @@
 #error "Invalid BOARD_TYPE"
 #endif
 
+// regional radio frequency and channel settings
+struct regSet {
+  uint32_t baseFreq;      // base frequency
+  uint32_t chanStep;      // channel step
+  uint8_t cChanNum;       // number of control channels
+  uint8_t cChanMap[3];    // map of control channels
+  uint8_t dChanNum;       // number of data channels
+  uint8_t dChanMap[48];   // map of data channels
+};
+
+regSet regSets[] = {
+  // REGION=US
+  { 902500000, 500000, 
+    3, { 1, 25, 49 },
+    48, { 7, 42, 41, 46, 48, 45, 11, 18, \
+          6, 2, 26, 13, 19, 39, 37, 43, \
+          10, 15, 20, 50, 16, 21, 32, 22, \
+          23, 0, 40, 9, 35, 33, 28, 34, \
+          24, 31, 17, 30, 27, 44, 14, 4, \
+          3, 29, 38, 36, 5, 12, 8, 47 },
+  },
+
+  // REGION=EU
+  { 869425000, 50000,
+    2, { 0, 4 },
+    3, { 1, 2, 3 },
+  },
+
+  // REGION=AU
+  { 915500000, 500000,
+    3, { 1, 12, 23 },
+    22, { 7, 11, 18, 6, 2, 13, 19, 10, \
+          15, 20, 16, 21, 22, 0, 9, 24, \
+          17, 14, 4, 3, 5, 8 },
+  },
+
+  // REGION=JP
+  { 920500000, 500000,
+    2, { 0, 8 },
+    7, { 7, 6, 2, 1, 4, 3, 5 },
+  }
+
+};
+
 // FREQUENCY BAND SETTINGS
-#if ISM_REGION==1
-// REGION=US
-#define BASEFREQ 902500000
-#define CHANSTEP 500000
-#define CHANNELS 51
-#define DATACHANS { 7, 42, 41, 46, 48, 45, 11, 18, \
-                    6, 2, 26, 13, 19, 39, 37, 43, \
-                    10, 15, 20, 50, 16, 21, 32, 22, \
-                    23, 0, 40, 9, 35, 33, 28, 34, \
-                    24, 31, 17, 30, 27, 44, 14, 4, \
-                    3, 29, 38, 36, 5, 12, 8, 47 }
-#define CTRLCHANS { 1, 25, 49 }
+#if ISM_REGION==1     // REGION=US
+#define REGIX 0
 
-#elif ISM_REGION==2
-// REGION=EU
-#define BASEFREQ 869425000
-#define CHANSTEP 50000
-#define CHANNELS 5
-#define DATACHANS { 1, 2, 3 }
-#define CTRLCHANS { 0, 4 }
+#elif ISM_REGION==2   // REGION=EU
+#define REGIX 1
 
-#elif ISM_REGION==4
-// REGION=ANZ
-#define BASEFREQ 915500000
-#define CHANSTEP 500000
-#define CHANNELS 25
-#define DATACHANS { 7, 11, 18, 6, 2, 13, 19, 10, \
-                    15, 20, 16, 21, 22, 0, 9, 24, \
-                    17, 14, 4, 3, 5, 8 }
-#define CTRLCHANS { 1, 12, 23 }
+#elif ISM_REGION==4   // REGION=AU
+#define REGIX 2
 
-#elif ISM_REGION==6
-// REGION=JP
-#define BASEFREQ 920500000
-#define CHANSTEP 500000
-#define CHANNELS 9
-#define DATACHANS { 7, 6, 2, 1, 4, 3, 5 }
-#define CTRLCHANS { 0, 8 }
+#elif ISM_REGION==6   // REGION=JP
+#define REGIX 3
 
 #else
 #error "Invalid ISM_REGION"
 #endif
 
-uint8_t dataChans[] = DATACHANS;
-uint8_t ctrlChans[] = CTRLCHANS;
+
+// Current regset - can be changed at runtime
+regSet * curRegSet = &(regSets[REGIX]);
 
 // Common settings for GTM waveform
 int bitrate = 24000;
@@ -304,7 +322,7 @@ void setChan(uint8_t chan)
 {
   unsigned long tStart = millis();
 
-  LoRa.setFrequency(BASEFREQ + (chan*CHANSTEP));
+  LoRa.setFrequency(curRegSet->baseFreq + (chan*curRegSet->chanStep));
 
   bool locked = false;
   while(!locked) {
@@ -327,8 +345,9 @@ void setChan(uint8_t chan)
 // To hop to a channel by number, use instead setChan() above
 void setDataChanX(uint8_t dChanX)
 {
-  dChanX %= sizeof(dataChans);
-  setChan(dataChans[dChanX]);
+  dChanX %= curRegSet->dChanNum;
+  //setChan(dataChans[dChanX]);
+  setChan(curRegSet->dChanMap[dChanX]);
 }
 
 // Tune to a control channel (next in sequence and increment)
@@ -336,8 +355,8 @@ void setDataChanX(uint8_t dChanX)
 void setCtrlChan()
 {
   currCChIdx++;
-  currCChIdx %= sizeof(ctrlChans);
-  setChan(ctrlChans[currCChIdx]);
+  currCChIdx %= curRegSet->cChanNum;
+  setChan(curRegSet->cChanMap[currCChIdx]);
 }
 
 
@@ -421,7 +440,7 @@ void gtmlabSetup()
   // Configure the CS, reset, and IRQ pins
   LoRa.setPins(pinCS, pinRST, pinIRQ);
 
-  if (!LoRa.begin(BASEFREQ)) {   // init radio at base frequency
+  if (!LoRa.begin(curRegSet->baseFreq)) {   // init radio at base frequency
     LOGE("Radio init failed. Check pin definitions");
     while (true);
   }
@@ -992,7 +1011,7 @@ int txSendSync(uint8_t chIDX, uint8_t frags, uint8_t iniTTL, uint8_t curTTL)
   mBuf[3] = curTTL;
   
   // CCH already set from main loop, just stay on it
-  setChan(ctrlChans[currCChIdx]); 
+  setChan(curRegSet->cChanMap[currCChIdx]); 
 
   LOGI("TX CCh=%02d SYNC(1): chIDX=%d, frags=%d, iniTTL=%d, curTTL=%d", 
         currChan, chIDX, frags, iniTTL, curTTL);
@@ -1013,7 +1032,8 @@ int txSendAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
 
   // setCtrlChanTX();  // jump to a FREE control channel
   // CCH already set from main loop, just stay on it
-  setChan(ctrlChans[currCChIdx]); 
+  // setChan(ctrlChans[currCChIdx]); 
+  setChan(curRegSet->cChanMap[currCChIdx]); 
 
   LOGI("TX CCh=%02d ACK (3): hash=0x%04x, hops=%d, iniTTL=%d, curTTL=%d", 
         currChan, hashID, hops, iniTTL, curTTL);
@@ -1033,7 +1053,7 @@ int txSendTime(uint64_t time32)
   mBuf[3] = time32 & 0xff;
 
   // CCH already set from main loop, just stay on it
-  setChan(ctrlChans[currCChIdx]); 
+  setChan(curRegSet->cChanMap[currCChIdx]); 
 
   LOGI("TX CCh=%02d TIME(0): 0x%08x", currChan, time32);
   txEncodeAndSend(mBuf, 4, PKT_TYPE_TIME);
@@ -1060,7 +1080,7 @@ int txSendMsg(uint8_t * mBuf, uint8_t mLen, uint8_t iniTTL, uint8_t curTTL)
   txMsgPos %= HASH_BUF_LEN;
 
   // pick a random data channel
-  currDChIdx = random(sizeof(dataChans)-1);
+  currDChIdx = random(curRegSet->dChanNum - 1);
 
   // send sync packet
   txSendSync(currDChIdx, nFrags, iniTTL, curTTL);
@@ -1087,7 +1107,7 @@ int txSendMsg(uint8_t * mBuf, uint8_t mLen, uint8_t iniTTL, uint8_t curTTL)
 
     // hop to next channel in chan map
     currDChIdx++;
-    currDChIdx %= sizeof(dataChans);
+    currDChIdx %= curRegSet->dChanNum;
     setDataChanX(currDChIdx);
 
     // send the fragment

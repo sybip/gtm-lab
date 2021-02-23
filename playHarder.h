@@ -165,6 +165,8 @@ int conExec()
   //  !r0 = set mesh relay function OFF
   //  !r1 = set mesh relay function ON
   //  -----
+  //  !sgX = set geopolitical region to X (1,2,4,6)
+  //  -----
   //  !da = dump ALL radio registers
   //  !di = dump ISR registers
   //  !df = dump entire FIFO content
@@ -248,8 +250,8 @@ int conExec()
       xChan = strtoul(hexBuf, NULL, 10) & 0xff;
       scanning = false;
       // Range check
-      if (xChan >= CHANNELS) {
-        LOGW("Channel out of range (0-%d)", (CHANNELS-1));
+      if (xChan >= (curRegSet->dChanNum + curRegSet->cChanNum)) {
+        LOGW("Channel out of range (0-%d)", (curRegSet->dChanNum + curRegSet->cChanNum - 1));
       } else {
         LOGI("Set Channel: %d", xChan);
         setChan(xChan);
@@ -260,6 +262,28 @@ int conExec()
       memcpy(hexBuf, conBuf+3, 2);
       txPackDelay = strtoul(hexBuf, NULL, 10) & 0xff;
       LOGI("PACKDELAY now %dms", txPackDelay);
+    } else if (conBuf[2] == 'g') {
+      switch(conBuf[3]) {
+        case '1':
+          LOGI("SETGEO: US");
+          curRegSet = &(regSets[0]);
+          break;
+        case '2':
+          LOGI("SETGEO: EU");
+          curRegSet = &(regSets[1]);
+          break;
+        case '4':
+          LOGI("SETGEO: AU");
+          curRegSet = &(regSets[2]);
+          break;
+        case '6':
+          LOGI("SETGEO: JP");
+          curRegSet = &(regSets[3]);
+          break;
+        default:
+          LOGW("SETGEO - NOT FOUND!");
+      }
+      resetState();
     }
 
   } else if (conBuf[1] == 'd') {
@@ -287,6 +311,10 @@ int conExec()
       printf("INTXMODE: %s\n", inTXmode ? "ON":"OFF");
       printf("CURRCHAN: %d\n", currChan);
       printf("RELAYING: %s\n", relaying ? "ON":"OFF");
+      printf("BASEFREQ: %d\n", curRegSet->baseFreq);
+      printf("CHANSTEP: %d\n", curRegSet->chanStep);
+      printf("CCHANNUM: %d\n", curRegSet->cChanNum);
+      printf("DCHANNUM: %d\n", curRegSet->dChanNum);
 
     } else if (conBuf[2] == 'r') {
       memcpy(hexBuf, conBuf+3, 2);
