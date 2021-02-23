@@ -97,7 +97,7 @@ regSet regSets[] = {
 #elif ISM_REGION==4   // REGION=AU
 #define REGIX 2
 
-#elif ISM_REGION==6   // REGION=JP
+#elif ISM_REGION==8   // REGION=JP
 #define REGIX 3
 
 #else

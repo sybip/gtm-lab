@@ -165,7 +165,7 @@ int conExec()
   //  !r0 = set mesh relay function OFF
   //  !r1 = set mesh relay function ON
   //  -----
-  //  !sgX = set geopolitical region to X (1,2,4,6)
+  //  !sgX = set geopolitical region to X (1,2,4,8)
   //  -----
   //  !da = dump ALL radio registers
   //  !di = dump ISR registers
@@ -276,7 +276,7 @@ int conExec()
           LOGI("SETGEO: AU");
           curRegSet = &(regSets[2]);
           break;
-        case '6':
+        case '8':
           LOGI("SETGEO: JP");
           curRegSet = &(regSets[3]);
           break;
