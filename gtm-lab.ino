@@ -521,9 +521,6 @@ void gtmlabLoop()
   curr_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2);
   curr_IRQ1 = LoRa.readRegister(REG_IRQ_FLAGS_1);
 
-  if (curr_IRQ1 & 0x02)  // Preamble detected, stay on channel
-      scanning = false;
-
   if ((curr_IRQ1 != prev_IRQ1) || (curr_IRQ2 != prev_IRQ2)) {
     // Something changed in the IRQ registers
 
@@ -542,6 +539,7 @@ void gtmlabLoop()
     if (((prev_IRQ1 & 0x02)!=0x02) && ((curr_IRQ1 & 0x02)==0x02)) {
       LOGD("PREAMBLE (t=0)");
       pktStart=millis();
+      scanning = false;
       if (!recvData) {
         // record "last preamble detected" for control channel
         lastCChAct[currCChIdx] = millis();
