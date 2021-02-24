@@ -104,6 +104,7 @@ regSet regSets[] = {
 #error "Invalid ISM_REGION"
 #endif
 
+#define MAX_TX_POWER 20     // in dBm
 
 // Current regset - can be changed at runtime
 regSet * curRegSet = &(regSets[REGIX]);

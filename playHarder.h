@@ -17,7 +17,6 @@
 #define MSGB_TLV_LCTN 0x06    // Location object
 #define MSGB_TLV_PUBK 0xfc    // Public key object
 
-
 // Assembles and sends a "shout" message with the supplied string as message body
 // (thanks to https://gitlab.com/almurphy for the Arduino implementation)
 int testShoutTx(char * msgBody, bool direct = false)
@@ -166,12 +165,14 @@ int conExec()
   //  !r1 = set mesh relay function ON
   //  -----
   //  !sgX = set geopolitical region to X (1,2,4,8)
+  //  !spDD = set TX power dBm (DD in decimal 00 - 20)
   //  -----
   //  !da = dump ALL radio registers
   //  !di = dump ISR registers
   //  !df = dump entire FIFO content
   //      (use !dr00 to read one FIFO byte)
   //  !drXX = dump register XX (in HEX)
+  //  !ds = dump state variables (incomplete)
   //  -----
   //  !wXXYY = write to register XX value YY
   //      (XX and YY in HEX)
@@ -284,6 +285,13 @@ int conExec()
           LOGW("SETGEO - NOT FOUND!");
       }
       resetState();
+    } else if (conBuf[2] == 'p') {
+      memcpy(hexBuf, conBuf+3, 2);
+      uint8_t txPower = strtoul(hexBuf, NULL, 10) & 0xff;
+      if (txPower > MAX_TX_POWER)
+        txPower = MAX_TX_POWER;
+      LoRa.setTxPower(txPower);
+      LOGI("SET TX Power: %d", txPower);
     }
 
   } else if (conBuf[1] == 'd') {
