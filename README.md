@@ -23,7 +23,6 @@ Executive summary: **can send and receive messages** to/from the goTenna
 mesh network.
 
 ### RX capability:
-- channel hopping
 - preamble and syncword detection
 - control channel scanning
 - error correction
@@ -47,12 +46,24 @@ The software is tested for interoperation with:
 ## Code quality
 Could be indulgently described as *barely functional early-proof-of-concept*
 
+## Some assembly required
+You will need:
+- a supported ESP32/RFM board (see below under "Easy")
+- [Arduino IDE](https://www.arduino.cc/en/software/) 1.8+ with 
+[ESP32 support](https://github.com/espressif/arduino-esp32)
+
+If purchasing new hardware for this project, we recommend the T-Beam;
+make sure to select the 915MHz "USA" version, which covers all goTenna Mesh 
+bands worldwide.
+It has a 18650 battery holder with on-board management and a built-in 
+uBlox NEO GPS, which will come in handy in future experiments.
+
 ## Supported hardware
 - **Easy:** out of the box, the code contains pre-defined configurations for 
 two widely available, **open-source hardware** boards, selectable via the 
 `BOARD_TYPE` definition in the configuration file:
+  - [LILYGO T-Beam 1.0](https://github.com/Xinyuan-LilyGO/LilyGO-T-Beam) and newer
   - [Sparkfun WRL-15006](https://github.com/sparkfun/ESP32_LoRa_1Ch_Gateway)
-  - [LILYGO t-beam 1.0](https://github.com/Xinyuan-LilyGO/LilyGO-T-Beam) and newer
 
 - **Medium:** any ESP32 board with an SPI-connected RFM95W or compatible 
 SX1276-based radio should work, as long as the correct pin connections are 
@@ -71,8 +82,8 @@ mode.
 ## Installation
 - Download the code (all files) from https://github.com/sybip/gtm-lab
 - **do not skip this step** Edit the `gtmConfig.h` file and change the 
-`BOARD_TYPE` and `ISM_REGION` definitions to suit your environment; 
-- Compile and upload to your board using Arduino 1.8+ with ESP32 1.0+ add-ons
+`BOARD_TYPE` and `ISM_REGION` definitions to suit your environment;
+- Compile and upload to your board using the Arduino IDE
 
 You're ready to play!
 
@@ -116,7 +127,7 @@ These objects can be further processed on the computer using a Python or PERL
 script to study the format of the packets and extract useful information.
 
 ### Test console
-Documented inside the `playHarder.h` file and subject to continuous change.
+Documented inside the `playHarder.cpp` file and subject to continuous change.
 
 ## Documentation and further info
 All technical information relevant to this project is (or will be) published 
