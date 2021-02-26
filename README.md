@@ -55,8 +55,8 @@ You will need:
 If purchasing new hardware for this project, we recommend the T-Beam;
 make sure to select the 915MHz "USA" version, which covers all goTenna Mesh 
 bands worldwide.
-It has a 18650 battery holder with on-board management and a built-in 
-uBlox NEO GPS, which will come in handy in future experiments.
+It has a 18650 Li-Ion battery holder with on-board management and a built-in 
+u-blox NEO GPS, which will come in handy in future experiments.
 
 ## Supported hardware
 - **Easy:** out of the box, the code contains pre-defined configurations for 
