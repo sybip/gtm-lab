@@ -15,6 +15,8 @@
 // -----------------------
 //  do you even lift? :)
 
+#define PLAY_VER 2021022603   // Playground version
+
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
 #define MSGB_TLV_NICK 0x03    // Message sender nickname
@@ -36,11 +38,11 @@
 
 // Assembles and sends a "shout" message with the supplied string as message body
 // (thanks to https://gitlab.com/almurphy for the Arduino implementation)
-int testShoutTx(char * msgBody, bool direct = false)
+int testShoutTx(char * msgBody, uint16_t msgLen, bool direct = false)
 {
   uint32_t time32 = now();
-  uint8_t mData[256];  // message buffer (for a small message)
-  uint8_t mPos = 0;
+  uint8_t mData[300];  // message buffer (for a small message)
+  uint16_t mPos = 0;
   uint8_t blobPos = 0;
 
   // Message class and App ID
@@ -87,9 +89,9 @@ int testShoutTx(char * msgBody, bool direct = false)
 
   // clamp message size to 220 bytes
   if (msgSize > 220) {
-    LOGW("Message too long, truncated");
-    msgSize = 220;
+    LOGW("Message too long, may fail");
   }
+
   mData[mPos++] = 4;
   mData[mPos++] = msgSize;
   memcpy(mData+mPos, msgBody, msgSize);
@@ -131,9 +133,10 @@ int testShoutTx(char * msgBody, bool direct = false)
 
 
 // Generate a text of random size and send it as a "shout" message
-int testMessage()
+int testMessage(uint16_t msgLen)
 {
-  size_t msgLen = random(220);
+  if (msgLen == 0)
+    msgLen = random(230);
 
   char mBody[256];
 
@@ -143,7 +146,7 @@ int testMessage()
   }
   mBody[msgLen] = 0;  // C string termination
 
-  testShoutTx(mBody);
+  testShoutTx(mBody, msgLen);
 }
 
 
@@ -157,10 +160,11 @@ int conExec(char *conBuf, uint16_t conLen)
   uint8_t wReg = 0;
   uint8_t wVal = 0;
   uint8_t xChan = 0;
+  uint8_t mData[256];  // message buffer (for a small message)
 
   if (conBuf[0] != '!') {
     // take text from conBuf and shout it
-    testShoutTx(conBuf);
+    testShoutTx(conBuf, conLen);
     return(0);
   }
 
@@ -178,20 +182,19 @@ int conExec(char *conBuf, uint16_t conLen)
   //  !mt = set radio TX mode
   //    (all !m commands will also pause chan scanning)
   //  -----
-  //  !r0 = set mesh relay function OFF
-  //  !r1 = set mesh relay function ON
-  //  -----
   //  !sgX = set geopolitical region to X (1,2,4,8)
   //  !spDD = set TX power dBm (DD in decimal 00 - 20)
+  //  !sr0 = set mesh relay function OFF
+  //  !sr1 = set mesh relay function ON
   //  -----
   //  !da = dump ALL radio registers
   //  !di = dump ISR registers
   //  !df = dump entire FIFO content
   //      (use !dr00 to read one FIFO byte)
-  //  !drXX = dump register XX (in HEX)
+  //  !drXX = dump radio register XX (in HEX)
   //  !ds = dump state variables (incomplete)
   //  -----
-  //  !wXXYY = write to register XX value YY
+  //  !wXXYY = write to radio register XX value YY
   //      (XX and YY in HEX)
   //  -----
   //  !cDD = change channel (DD in decimal)
@@ -199,10 +202,12 @@ int conExec(char *conBuf, uint16_t conLen)
   //  !h0 = control chan scanning pause
   //  !h1 = control chan scanning resume
   //  -----
-  //  !ta = transmit a random ACK packet directly
+  //  !td = transmit a random ACK packet directly
   //  !tt = transmit a TIME packet directly
-  //  !tx = transmit a random ACK packet using queue
+  //  !ta = transmit a random ACK packet using queue
   //  !tm = transmit a random shout using queue
+  //     !tmXX = specify body size (in HEX)
+  //  !tx = transmit a data object supplied in HEX
   //
   if (conBuf[1] == 'l') {
     if (conBuf[2] == 'v') {
@@ -255,14 +260,6 @@ int conExec(char *conBuf, uint16_t conLen)
     }
     LOGI("SCANNING is now %s", (scanning ? "ON":"OFF"));
 
-  } else if (conBuf[1] == 'r') {
-    if (conBuf[2] == '0') {
-      relaying = false;
-    } else if (conBuf[2] == '1') {
-      relaying = true;
-    }
-    LOGI("RELAYING is now %s", (relaying ? "ON":"OFF"));
-
   } else if (conBuf[1] == 'c') {
       memcpy(hexBuf, conBuf+2, 2);
       xChan = strtoul(hexBuf, NULL, 10) & 0xff;
@@ -291,6 +288,7 @@ int conExec(char *conBuf, uint16_t conLen)
           curRegSet = &(regSets[1]);
           break;
         case '4':
+        case '5':
           LOGI("SETGEO: AU");
           curRegSet = &(regSets[2]);
           break;
@@ -302,6 +300,7 @@ int conExec(char *conBuf, uint16_t conLen)
           LOGW("SETGEO - NOT FOUND!");
       }
       resetState();
+
     } else if (conBuf[2] == 'p') {
       memcpy(hexBuf, conBuf+3, 2);
       uint8_t txPower = strtoul(hexBuf, NULL, 10) & 0xff;
@@ -309,6 +308,14 @@ int conExec(char *conBuf, uint16_t conLen)
         txPower = MAX_TX_POWER;
       LoRa.setTxPower(txPower);
       LOGI("SET TX Power: %ddBm", txPower);
+
+    } else if (conBuf[2] == 'r') {
+      if (conBuf[3] == '0') {
+        relaying = false;
+      } else if (conBuf[3] == '1') {
+        relaying = true;
+      }
+      LOGI("RELAYING is now %s", (relaying ? "ON":"OFF"));
     }
 
   } else if (conBuf[1] == 'd') {
@@ -331,6 +338,7 @@ int conExec(char *conBuf, uint16_t conLen)
 
     } else if (conBuf[2] == 's') {
       // READ STATE VARIABLES
+      printf("PLAY_VER: %d\n", PLAY_VER);
       printf("SCANNING: %s\n", scanning ? "ON":"OFF");
       printf("RECVDATA: %s\n", recvData ? "ON":"OFF");
       printf("INTXMODE: %s\n", inTXmode ? "ON":"OFF");
@@ -358,28 +366,51 @@ int conExec(char *conBuf, uint16_t conLen)
     LoRa.writeRegister(wReg, wVal);
 
   } else if (conBuf[1] == 't') {
-    if (conBuf[2] == 'a') {
-      // TEST/ACK - send an ACK packet for a randomly generated HashID
+    if (conBuf[2] == 'd') {
+      // TEST/DIRECT - send an ACK packet DIRECTLY
       txStart();    // fire up transmitter
       txSendAck(random(65535), 1, 3, 2);
       resetState(); // return to RX mode
 
-    } else if (conBuf[2] == 't') {
-      // TEST/TIME - send a TIME packet
-      txStart();    // fire up transmitter
-      txSendTime(0x60201337);
-      resetState(); // return to RX mode
-
-    } else if (conBuf[2] == 'm') {
-      // TEST/MSG - send a random message
-      testMessage();
-
-    } else if (conBuf[2] == 'x') {
-      // TEST/X - test ACK sending from main loop with LBT
+    } else if (conBuf[2] == 'a') {
+      // TEST/ACK - test ACK sending from main loop with LBT
       if (txEnQueueACK(random(65535), 1, 3, 2)) {
         LOGI("ACK QUEUED");
       } else {
         LOGI("ACK DROPPED (buffer full)");
+      }
+
+    } else if (conBuf[2] == 't') {
+      // TEST/TIME - send a TIME packet DIRECTLY
+      txStart();    // fire up transmitter
+      txSendTime(0x60201337);
+      resetState(); // return to RX mode
+
+    } else if (conBuf[2] == 'x') {
+      // TEST/HEXMSG
+      int i;
+
+      // unhexlify message into temp buffer mData
+      for (i = 0; i < ((conLen-3)>>1); i++) {
+        memcpy(hexBuf, conBuf+3+(i<<1), 2);
+        mData[i] = strtoul(hexBuf, NULL, 16) & 0xff;
+      }
+      if (txEnQueueMSG(mData, i, 3, 2)) {
+        LOGI("TX QUEUED");
+      } else {
+        LOGI("TX DROPPED (buffer full)");
+      }
+
+    } else if (conBuf[2] == 'm') {
+      // TEST/MSG - send a random message
+      if (conLen >= 5) {
+        // message length was provided
+        memcpy(hexBuf, conBuf+3, 2);
+        wVal = strtoul(hexBuf, NULL, 16) & 0xff;
+        LOGI("LEN: %d", wVal);
+        testMessage(wVal);
+      } else {
+        testMessage(0);
       }
     }
 
