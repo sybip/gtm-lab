@@ -19,6 +19,9 @@
 // Default relay mode - can be changed at runtime
 #define DFLT_RELAY false   // relaying disabled at startup
 
+// Default App ID - can be changed at runtime
+#define DFLT_APPID 0x7357  // use testnet by default
+
 // Logging verbosity, please use sparingly:
 // - DEBUG may distort protocol timing causing some message loss
 // - VERBOSE **will** break the protocol timings and prevent

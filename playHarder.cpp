@@ -36,6 +36,8 @@
 #define LOGD( format, ... ) ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG,   TAG, format, ##__VA_ARGS__)
 #define LOGV( format, ... ) ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, format, ##__VA_ARGS__)
 
+uint16_t appID = DFLT_APPID;  // defined in gtmConfig.h
+
 // Assembles and sends a "shout" message with the supplied string as message body
 // (thanks to https://gitlab.com/almurphy for the Arduino implementation)
 int testShoutTx(char * msgBody, uint16_t msgLen, bool direct = false)
@@ -47,8 +49,8 @@ int testShoutTx(char * msgBody, uint16_t msgLen, bool direct = false)
 
   // Message class and App ID
   mData[mPos++] = MSG_CLASS_SHOUT;
-  mData[mPos++] = 0x3f;  // goTenna AppID MSB
-  mData[mPos++] = 0xff;  // goTenna AppID LSB
+  mData[mPos++] = (appID >> 8) & 0xff;  // AppID MSB
+  mData[mPos++] = appID & 0xff;         // AppID LSB
 
   // No destination element, skip to HEAD element
   mData[mPos++] = 0xfb;  // Type of HEAD element: 0xFB
@@ -186,6 +188,7 @@ int conExec(char *conBuf, uint16_t conLen)
   //  !spDD = set TX power dBm (DD in decimal 00 - 20)
   //  !sr0 = set mesh relay function OFF
   //  !sr1 = set mesh relay function ON
+  //  !saXXXX = set App ID to XXXX (in HEX)
   //  -----
   //  !da = dump ALL radio registers
   //  !di = dump ISR registers
@@ -308,6 +311,10 @@ int conExec(char *conBuf, uint16_t conLen)
         txPower = MAX_TX_POWER;
       LoRa.setTxPower(txPower);
       LOGI("SET TX Power: %ddBm", txPower);
+
+    } else if (conBuf[2] == 'a') {
+      appID = strtoul(conBuf+3, NULL, 16) & 0xffff;
+      LOGI("SET APPID: %04x", appID);
 
     } else if (conBuf[2] == 'r') {
       if (conBuf[3] == '0') {
