@@ -39,7 +39,7 @@ void loop()
     char conOne = Serial.read();
     if ((conOne == '\n') || (conLen>=(sizeof(conBuf)))){
       conBuf[conLen++] = 0;
-      conExec(conBuf, conLen);  // in playHarder.cpp
+      conExec(conBuf, conLen-1);  // in playHarder.cpp
       conLen = 0;
     } else {
       conBuf[conLen++] = conOne;

@@ -15,7 +15,7 @@
 // -----------------------
 //  do you even lift? :)
 
-#define PLAY_VER 2021022701   // Playground version
+#define PLAY_VER 2021022803   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -208,6 +208,7 @@ int conExec(char *conBuf, uint16_t conLen)
   //  !td = transmit a random ACK packet directly
   //  !tt = transmit a TIME packet directly
   //  !ta = transmit a random ACK packet using queue
+  //     !taXXXX = specify hash ID (in HEX)
   //  !tm = transmit a random shout using queue
   //     !tmXX = specify body size (in HEX)
   //  !tx = transmit a data object supplied in HEX
@@ -355,6 +356,7 @@ int conExec(char *conBuf, uint16_t conLen)
       printf("CHANSTEP: %d\n", curRegSet->chanStep);
       printf("CCHANNUM: %d\n", curRegSet->cChanNum);
       printf("DCHANNUM: %d\n", curRegSet->dChanNum);
+      printf("MY_APPID: 0x%04x\n", appID);
 
     } else if (conBuf[2] == 'r') {
       memcpy(hexBuf, conBuf+3, 2);
@@ -381,7 +383,12 @@ int conExec(char *conBuf, uint16_t conLen)
 
     } else if (conBuf[2] == 'a') {
       // TEST/ACK - test ACK sending from main loop with LBT
-      if (txEnQueueACK(random(65535), 1, 3, 2)) {
+      uint16_t hashID = random(65535);
+      // if a hashID was provided, use that
+      if (conLen == 7) {
+        hashID = strtoul(conBuf+3, NULL, 16) & 0xffff;
+      }
+      if (txEnQueueACK(hashID, 1, 3, 2)) {
         LOGI("ACK QUEUED");
       } else {
         LOGI("ACK DROPPED (buffer full)");
@@ -410,7 +417,7 @@ int conExec(char *conBuf, uint16_t conLen)
 
     } else if (conBuf[2] == 'm') {
       // TEST/MSG - send a random message
-      if (conLen >= 5) {
+      if (conLen == 5) {
         // message length was provided
         memcpy(hexBuf, conBuf+3, 2);
         wVal = strtoul(hexBuf, NULL, 16) & 0xff;
