@@ -5,7 +5,6 @@
 // Released under MIT license (see LICENSE file for full details)
 //
 
-#include <TimeLib.h>
 #include <SPI.h>
 
 #include "gtmConfig.h"

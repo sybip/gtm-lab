@@ -31,12 +31,12 @@ mesh network.
 
 ### TX capability:
 - assemble radio packets with header and error correction codes
-- generate ACK, SYNC, DATA, TIME payloads with correct formats
-- packetize and send large messages up to 255 bytes
+- generate ACK, SYNC, DATA, TIME packets with correct formats
+- packetize and send large payloads - up to 255 bytes
 - control channel listen-before-talk
 
 ### Relay/mesh capability:
-- tentative implementation, more testing required
+- tentative implementation, more work required
 
 ## Interop testing
 The software is tested for interoperation with:
@@ -45,18 +45,6 @@ The software is tested for interoperation with:
 
 ## Code quality
 Could be indulgently described as *barely functional early-proof-of-concept*
-
-## Some assembly required
-You will need:
-- a supported ESP32/RFM board (see below under "Easy")
-- [Arduino IDE](https://www.arduino.cc/en/software/) 1.8+ with 
-[ESP32 support](https://github.com/espressif/arduino-esp32)
-
-If purchasing new hardware for this project, we recommend the T-Beam;
-make sure to select the 915MHz "USA" version, which covers all goTenna Mesh 
-bands worldwide.
-It has a 18650 Li-Ion battery holder with on-board management and a built-in 
-u-blox NEO GPS, which will come in handy in future experiments.
 
 ## Supported hardware
 - **Easy:** out of the box, the code contains pre-defined configurations for 
@@ -80,21 +68,39 @@ is disabled at startup and never used - the radio operates in "legacy" FSK
 mode.
 
 ## Installation
-- Download the code (all files) from https://github.com/sybip/gtm-lab
-- **do not skip this step** Edit the `gtmConfig.h` file and change the 
-`BOARD_TYPE` and `ISM_REGION` definitions to suit your environment;
-- Compile and upload to your board using the Arduino IDE
 
-You're ready to play!
+### Hardware requirements
+You will need a supported ESP32/RFM board (see "Easy" under "Supported hardware" above)
+
+If purchasing new hardware for this project, we recommend the T-Beam;
+its 18650 Li-Ion battery holder with on-board management and built-in 
+u-blox NEO GPS will come in handy in future experiments.
+Make sure to select the 915MHz "USA" version, which covers all goTenna Mesh 
+bands worldwide.
+
+### Software requirements
+[Arduino IDE](https://www.arduino.cc/en/software/) 1.8+ with [ESP32 support](https://github.com/espressif/arduino-esp32)
+
+If setting up Arduino/ESP32 for the first time, refer to the 
+[recommended installation instructions](https://github.com/espressif/arduino-esp32/blob/master/docs/arduino-ide/boards_manager.md).
 
 ### Dependencies
-All required libraries are included, slightly modified from the original ones 
-to support the (somewhat left-field) requirements of this project:
-- [Arduino LoRa](https://github.com/sandeepmistry/arduino-LoRa) library 
-modified to operate in non-LoRa mode, renamed to **LoRaX** to avoid a name conflict
-- [Arduino RS-FEC](https://github.com/simonyipeter/Arduino-FEC) (Reed-Solomon) 
-library was modded to support variable length messages and alternative FCRs, 
-and renamed to **RS-mod-FCR**
+The only external dependency is the **Time** library by Michael Margolis - 
+install it using the *Tools > Manage Libraries* menu option in the 
+Arduino IDE.
+
+All other required libraries are included (see **Credits** section for details)
+
+### Build and install
+
+- Download the code (all files) from https://github.com/sybip/gtm-lab
+- Open `gtm-lab` in the Arduino IDE
+- **do not skip this step** Edit the `gtmConfig.h` file and change the 
+`BOARD_TYPE` and `ISM_REGION` definitions to suit your environment
+- Select your ESP32 board from the Arduino *Tools > Board* menu (e.g. *T-Beam*)
+- Compile and upload to your board.
+
+All done - you're ready to play!
 
 ## Operation
 ### Basic operation - packet logger and simple shouter
@@ -114,6 +120,12 @@ Type a short text in the serial console and press Enter. The text will be
 transmitted as a SHOUT class message, and (assuming that all your settings 
 are correct) received by the goTenna Mesh clients in range.
 
+**NOTE:** By default, gtm-lab will transmit on the **testnet** AppID 0x7357, 
+therefore shouted messages will **not** be received by the goTenna app.
+This is intentional to minimize unwanted interference with goTenna app traffic.
+To enable sending to goTenna app, enter command `!sa3fff` in the gtm-lab
+console (set AppID to 0x3fff), and messages will become visible.
+
 ### Radio protocol exploration
 Change the `VERBOSITY` line to `ESP_LOG_DEBUG` or even `ESP_LOG_VERBOSE` 
 to view details of received packets, correction protocols, channel hopping etc.
@@ -127,7 +139,8 @@ These objects can be further processed on the computer using a Python or PERL
 script to study the format of the packets and extract useful information.
 
 ### Test console
-Documented inside the `playHarder.cpp` file and subject to continuous change.
+Implemented in the `playHarder.cpp` file and documented inline, and subject 
+to continuous breaking changes.
 
 ## Documentation and further info
 All technical information relevant to this project is (or will be) published 
@@ -135,23 +148,28 @@ under a copyleft license in the [pyGT project wiki](https://github.com/sybip/pyG
 and of course everyone's invited to share their findings if they want to.
 
 No Github account? - no problem! Just shoot a bitmessage to the author at 
-BM-2cW2P5qmucxH4jWP2JEyqKA12VhTJibUXL .
+BM-2cW2P5qmucxH4jWP2JEyqKA12VhTJibUXL
 
 ## Credits
+### Software libraries
+- [Arduino Time library](https://github.com/PaulStoffregen/Time) Copyright Michael Margolis, LGPLv2.1 license
+- [Arduino LoRa library](https://github.com/sandeepmistry/arduino-LoRa) Copyright Sandeep Mistry, MIT license 
+(modified to operate in non-LoRa mode and renamed to **LoRaX** to avoid a name conflict)
+- [Reed-Solomon FEC library](https://github.com/simonyipeter/Arduino-FEC) 
+Copyright Mike Lubinets, Simoniy Peter, MIT license (modded to support variable length messages and 
+alternative FCRs, renamed to **RS-mod-FCR**)
 
+### Knowledge and information
 - [Tim](https://nitter.net/bjt2n3904) and [Woody](https://nitter.net/tb69rr) made 
 **[it](https://github.com/tkuester/gr-gotenna)** look easy: 
 https://www.youtube.com/watch?v=pKP74WGa_s0
 - [Clayton Smith](https://github.com/argilo) brought it all the way home with 
 https://github.com/argilo/gr-tenna
-- [Sandeep Mistry](https://github.com/sandeepmistry/arduino-LoRa), 
-[Mike Lubinets](https://github.com/mersinvald/Reed-Solomon), 
-[Simoniy Peter](https://github.com/simonyipeter/Arduino-FEC), 
-[Alec Murphy](https://gitlab.com/almurphy/ESP32GTM), 
-many thanks and humble apologies for butchering your code :)
-- and [everyone mentioned on this page](https://github.com/sybip/pyGT/wiki/Resources)
+- [Alec Murphy's ESP32GTM](https://gitlab.com/almurphy/ESP32GTM) for Arduino
+inspiration and some code snippets
+- and of course [every single person mentioned on this page](https://github.com/sybip/pyGT/wiki/Resources)
 
-Thank you. 
+Thank you all.
 
 ## Now go have some fun!
 

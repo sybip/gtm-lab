@@ -15,7 +15,7 @@
 // -----------------------
 //  do you even lift? :)
 
-#define PLAY_VER 2021022803   // Playground version
+#define PLAY_VER 2021030201   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -384,7 +384,7 @@ int conExec(char *conBuf, uint16_t conLen)
     } else if (conBuf[2] == 'a') {
       // TEST/ACK - test ACK sending from main loop with LBT
       uint16_t hashID = random(65535);
-      // if a hashID was provided, use that
+      // if a hashID was provided (!taXXXX), use that
       if (conLen == 7) {
         hashID = strtoul(conBuf+3, NULL, 16) & 0xffff;
       }
