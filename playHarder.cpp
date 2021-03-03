@@ -15,7 +15,7 @@
 // -----------------------
 //  do you even lift? :)
 
-#define PLAY_VER 2021030201   // Playground version
+#define PLAY_VER 2021030301   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -87,17 +87,10 @@ int testShoutTx(char * msgBody, uint16_t msgLen, bool direct = false)
   mPos += 4;
 
   // MSGB_TLV_TEXT
-  uint8_t msgSize = strlen(msgBody);
-
-  // clamp message size to 220 bytes
-  if (msgSize > 220) {
-    LOGW("Message too long, may fail");
-  }
-
   mData[mPos++] = 4;
-  mData[mPos++] = msgSize;
-  memcpy(mData+mPos, msgBody, msgSize);
-  mPos += msgSize;
+  mData[mPos++] = msgLen;
+  memcpy(mData+mPos, msgBody, msgLen);
+  mPos += msgLen;
 
   // Almost DONE! now add a CRC16 to blob
   // (this is reqd by GTA and different to packet CRC)
@@ -107,6 +100,11 @@ int testShoutTx(char * msgBody, uint16_t msgLen, bool direct = false)
   }
   mData[mPos++] = (msgCRC >> 8) & 0xff;
   mData[mPos++] = msgCRC & 0xff;
+
+  // Check the total length: (BLOB+CRC+HEAD+2 < 256)?
+  if ((mPos-blobPos) > (255-18)) {
+    LOGW("Blob too big (%d > %d), THIS WILL FAIL!", (mPos-blobPos), (255-18));
+  }
 
   LOGI("TX DATASIZE=%d", mPos);
 
