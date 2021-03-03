@@ -196,6 +196,13 @@ uint8_t msgQHead = 0, msgQTail = 0;
 uint8_t ackQHead = 0, ackQTail = 0;
 
 
+// user-definable event handler callbacks
+// MSG rx handler
+bool (* onRxMSG)(uint8_t *, uint16_t, uint8_t, uint8_t, uint8_t) = builtinRxMSG;
+// ACK rx handler
+bool (* onRxACK)(uint16_t, uint8_t, uint8_t, uint8_t, uint8_t) = builtinRxACK;
+
+
 // additive CRC16 function
 uint16_t CRC16_add(uint8_t b, uint16_t crc)
 {
@@ -690,11 +697,12 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
         }
       }
 
-      // output in standardized format
-      printf("RX_ACK:");
-      for (int i=2; i<rxLen; i++)
-        printf("%02x", rxBuf[i]);
-      printf("\n");
+      // new ACK received - call external handler if defined
+      if ((* onRxACK) != nullptr) {
+        if (! onRxACK(msgH16, (rxBuf[4]>>4), (rxBuf[4] & 0x0f), rxBuf[5], pktRSSI)) {
+          LOGD("ACK handler failed");
+        }
+      }
     }
     resetState();
 
@@ -720,12 +728,13 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
       } else {
         rxMsgBuf[rxMsgPos++] = msgH16;
         rxMsgPos %= HASH_BUF_LEN;
-        // output in standardized format (inittl, curttl, | ,hexmsg)
-        printf("RX_MSG:");
-        printf("%02x%02x|", lastIniTTL, lastCurTTL);
-        for (int i=0; i<packetLen; i++)
-          printf("%02x", packetBuf[i]);
-        printf("\n");
+
+        // New message received - call external handler if defined
+        if ((* onRxMSG) != nullptr) {
+          if (! onRxMSG(packetBuf, packetLen, lastIniTTL, lastCurTTL, pktRSSI)) {
+            LOGD("MSG handler failed");
+          }
+        }
 
         // Is this an echo of a message that we sent?
         if (inRingBuf(msgH16, txMsgBuf)) {
@@ -751,6 +760,28 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
   } else {
     LOGI("%s UNK (%d)", chanDesc, rxBuf[1]);    
   }
+}
+
+
+// simple builtin MSG handler - hexlified output
+bool builtinRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t RSSI)
+{
+  // output in standardized format (inittl, curttl, | ,hexmsg)
+  printf("RX_MSG:");
+  printf("%02x%02x|", iniTTL, curTTL);
+  for (int i=0; i<mLen; i++)
+    printf("%02x", mBuf[i]);
+  printf("\n");
+  return true;
+}
+
+
+// simple builtin ACK handler - hexlified output
+bool builtinRxACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t RSSI)
+{
+  // output in standardized format
+  printf("RX_ACK:%04x%02x%02x\n", hashID, ((hops & 0x0f)<<4) | (iniTTL & 0x0f), curTTL);
+  return true;  
 }
 
 
