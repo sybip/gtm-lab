@@ -151,7 +151,7 @@ int txSendTime(uint64_t time32);
 // Send a message
 // This is a complex action involving several packets
 // (will set channel; expects TX mode on)
-int txSendMsg(uint8_t * mBuf, uint8_t mLen, uint8_t iniTTL, uint8_t curTTL);
+int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL);
 
 // The functions below push an outbound object into the relevant
 //  outbound queue, to be transmitted as soon as the channel is clear
@@ -160,7 +160,7 @@ int txSendMsg(uint8_t * mBuf, uint8_t mLen, uint8_t iniTTL, uint8_t curTTL);
 //  instead of calling txSend(Ack|Sync|Msg) directly
 
 // Queue a message for sending (when channel is clear)
-bool txEnQueueMSG(uint8_t * msgObj, uint8_t msgLen, uint8_t iniTTL, uint8_t curTTL);
+bool txEnQueueMSG(uint8_t * msgObj, uint16_t msgLen, uint8_t iniTTL, uint8_t curTTL);
 
 // Queue an ACK for sending (when channel is clear)
 bool txEnQueueACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL);

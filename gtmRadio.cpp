@@ -127,7 +127,7 @@ uint8_t TXFRAGSIZE = 90;   // it's what they use
 uint8_t radioBuf[256];    // radio packet buffer
 uint8_t radioDec[248];    // reedsolo decode buffer
 uint8_t packetBuf[512];   // "a CVE waiting to happen"
-int packetLen = 0;
+uint16_t packetLen = 0;
 int radioLen = 0;
 int wantLen = 0;
 
@@ -194,6 +194,10 @@ ackDesc ackQueue[ACK_QUEUE_SIZE];
 
 uint8_t msgQHead = 0, msgQTail = 0;
 uint8_t ackQHead = 0, ackQTail = 0;
+
+// number of calls to gtmLabLoop() per received packet
+// (it's currently not optimal, we need to bring it way down)
+int pktLoops = 0;    // 20210303 PKTLOOPS
 
 
 // user-definable event handler callbacks
@@ -453,6 +457,9 @@ void gtmlabLoop()
   char rx_byte = 0;
   uint8_t curr_IRQ1 = 0;
   uint8_t curr_IRQ2 = 0;
+  bool payReady = false;
+
+  pktLoops++;    // 20210303 PKTLOOPS
 
   // Read IRQ registers once
   curr_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2);
@@ -476,6 +483,7 @@ void gtmlabLoop()
     if (((prev_IRQ1 & 0x02)!=0x02) && ((curr_IRQ1 & 0x02)==0x02)) {
       LOGD("PREAMBLE (t=0)");
       pktStart=millis();
+      pktLoops = 0;    // 20210303 PKTLOOPS
       scanning = false;
       if (!recvData) {
         // record "last preamble detected" for control channel
@@ -487,6 +495,7 @@ void gtmlabLoop()
       if (! pktStart) {
         // missed the preamble, but it's OK, start the timer now
         pktStart=millis();
+        pktLoops = 0;    // 20210303 PKTLOOPS
       }
       LOGD("PRE+SYNW (t=%d)", (millis()-pktStart));
       radioLen = 0;
@@ -497,6 +506,7 @@ void gtmlabLoop()
     if (((prev_IRQ2 & 0x04)!=0x04) && ((curr_IRQ2 & 0x04)==0x04)) {
       if (pktStart) {
         LOGD("PAYREADY (t=%d)", (millis()-pktStart));
+        payReady = true;
       } else {
         LOGD("PAYREADY IGNORED");  // likely a misfire
         resetState();
@@ -508,8 +518,10 @@ void gtmlabLoop()
       if ((radioLen > 0) && !((curr_IRQ2 & 0x04)==0x04)) {
         // lost sync while receiving packet - NOT GOOD
         LOGI("LOSTSYNC at pos %d/%d, t=%d", radioLen-1, radioBuf[0], (millis()-pktStart));
+#if 0  // this may be doing more harm than good
         resetState();
         // FIXME - bailout?
+#endif
       }
     }
 
@@ -520,25 +532,34 @@ void gtmlabLoop()
 
   if(((curr_IRQ1 & 0x03)==0x03) && 
      ((curr_IRQ2 & 0x20) || !(curr_IRQ2 & 0x40))) {
-    radioBuf[radioLen] = LoRa.readRegister(REG_FIFO);
-    // LOGV("< %02x", radioBuf[radioLen]);
-    radioLen++;
 
-    // if ((radioLen>0) && (radioLen>radioBuf[0])) {  // first byte is len
-    // use PAYLOAD_READY IRQ2 bit instead
-    if ((curr_IRQ2 & 0x04)==0x04) {
+    if (curr_IRQ2 & 0x20) {
+      // FIFO above threshold, read FIFOTHRE bytes blindly
+      for (int i=0; i<FIFOTHRE; i++) {
+        radioBuf[radioLen++] = LoRa.readRegister(REG_FIFO);
+      }
+    } else {
+      // FIFO below threshold, read one-by-one until empty
+      while (!((curr_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2)) & 0x40)) {
+        radioBuf[radioLen++] = LoRa.readRegister(REG_FIFO);
+
+        // keep watch for PAYREADY signaling at all times
+        if (curr_IRQ2 & 0x04) {
+          payReady = true;
+        }
+      }
+    }    
+
+    // check PAYLOAD_READY IRQ2 bit (read and saved above)
+    //if (payReady || (curr_IRQ2 & 0x04)) {
+    if (payReady) {
       // Read RSSI ASAP
       pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
 
-      // There may still be some unread payload in the fifo, so
-      //   keep reading fifo until fifoempty
-      while (!((curr_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2)) & 0x40)) {
-        radioBuf[radioLen] = LoRa.readRegister(REG_FIFO);
-        LOGV("< %02x", radioBuf[radioLen]);
-        radioLen++;
-      }
-
-      LOGD("rxLen=%d, RSSI=-%d (t=%d)", radioLen, (pktRSSI>>1), (millis()-pktStart));
+      // LOGD("rxLen=%d, RSSI=-%d (t=%d)", radioLen, (pktRSSI>>1), (millis()-pktStart));
+      // 20210303 PKTLOOPS
+      LOGD("rxLen=%d, RSSI=-%d (t=%d, loop=%d)", radioLen, (pktRSSI>>1), (millis()-pktStart), pktLoops);
+      pktLoops = 0;  // 20210303 PKTLOOPS
 
       ESP_LOG_BUFFER_HEXDUMP(TAG, radioBuf, radioLen, ESP_LOG_VERBOSE);
       if ((radioLen >= RX_MIN_LEN) && (radioLen <= RX_MAX_LEN)) {
@@ -987,7 +1008,7 @@ int txSendTime(uint64_t time32)
 // Send a message
 // This is a complex action involving several packets
 // (will set channel; expects TX mode on)
-int txSendMsg(uint8_t * mBuf, uint8_t mLen, uint8_t iniTTL, uint8_t curTTL)
+int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
 {
   uint8_t oBuf[128];   // output buffer
   uint8_t oLen = 0;    // output length
@@ -1046,7 +1067,7 @@ int txSendMsg(uint8_t * mBuf, uint8_t mLen, uint8_t iniTTL, uint8_t curTTL)
 
 
 // Queue a message for sending (when channel is clear)
-bool txEnQueueMSG(uint8_t * msgObj, uint8_t msgLen, uint8_t iniTTL, uint8_t curTTL)
+bool txEnQueueMSG(uint8_t * msgObj, uint16_t msgLen, uint8_t iniTTL, uint8_t curTTL)
 {
   if (msgQueue[msgQHead].curTTL>0) {
     // buffer is full, retry later
