@@ -15,7 +15,7 @@
 // -----------------------
 //  do you even lift? :)
 
-#define PLAY_VER 2021030301   // Playground version
+#define PLAY_VER 2021030501   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -37,6 +37,8 @@
 #define LOGV( format, ... ) ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, format, ##__VA_ARGS__)
 
 uint16_t appID = DFLT_APPID;  // defined in gtmConfig.h
+uint8_t testITTL = 3;   // initial TTL for test messages
+uint8_t testCTTL = 2;   // current TTL for test messages
 
 // Assembles and sends a "shout" message with the supplied string as message body
 // (thanks to https://gitlab.com/almurphy for the Arduino implementation)
@@ -115,14 +117,14 @@ int testShoutTx(char * msgBody, uint16_t msgLen, bool direct = false)
     // fire up the TX
     txStart();
     // send the message (this will also generate and send the SYNC)
-    txSendMsg(mData, mPos, 3, 2);
+    txSendMsg(mData, mPos, testITTL, testCTTL);
     // finally return to RX mode
     resetState();  // return to RX mode with a clean slate
     LOGI("TX COMPLETE");
 
   } else {
     // SEND VIA NEW RINGBUFFER (Listen-Before etc)
-    if (txEnQueueMSG(mData, mPos, 3, 2)) {
+    if (txEnQueueMSG(mData, mPos, testITTL, testCTTL)) {
       LOGI("TX QUEUED");
     } else {
       LOGI("TX DROPPED (buffer full)");
@@ -187,6 +189,7 @@ int conExec(char *conBuf, uint16_t conLen)
   //  !sr0 = set mesh relay function OFF
   //  !sr1 = set mesh relay function ON
   //  !saXXXX = set App ID to XXXX (in HEX)
+  //  !stXY = set TTL for test msgs: init=X, curr=Y
   //  -----
   //  !da = dump ALL radio registers
   //  !di = dump ISR registers
@@ -322,6 +325,16 @@ int conExec(char *conBuf, uint16_t conLen)
         relaying = true;
       }
       LOGI("RELAYING is now %s", (relaying ? "ON":"OFF"));
+
+    } else if (conBuf[2] == 't') {
+      if (conLen == 5) {
+        // message length was provided
+        memcpy(hexBuf, conBuf+3, 2);
+        wVal = strtoul(hexBuf, NULL, 16) & 0xff;
+        testITTL = (wVal >> 4) & 0x0f;
+        testCTTL = wVal & 0x0f;
+        LOGI("Test iniTTL=%d, curTTL=%d", testITTL, testCTTL);
+      }
     }
 
   } else if (conBuf[1] == 'd') {
@@ -354,6 +367,8 @@ int conExec(char *conBuf, uint16_t conLen)
       printf("CHANSTEP: %d\n", curRegSet->chanStep);
       printf("CCHANNUM: %d\n", curRegSet->cChanNum);
       printf("DCHANNUM: %d\n", curRegSet->dChanNum);
+      printf("TestITTL: %d\n", testITTL);
+      printf("TestCTTL: %d\n", testCTTL);
       printf("MY_APPID: 0x%04x\n", appID);
 
     } else if (conBuf[2] == 'r') {
@@ -376,7 +391,7 @@ int conExec(char *conBuf, uint16_t conLen)
     if (conBuf[2] == 'd') {
       // TEST/DIRECT - send an ACK packet DIRECTLY
       txStart();    // fire up transmitter
-      txSendAck(random(65535), 1, 3, 2);
+      txSendAck(random(65535), 1, testITTL, testCTTL);
       resetState(); // return to RX mode
 
     } else if (conBuf[2] == 'a') {
@@ -386,7 +401,7 @@ int conExec(char *conBuf, uint16_t conLen)
       if (conLen == 7) {
         hashID = strtoul(conBuf+3, NULL, 16) & 0xffff;
       }
-      if (txEnQueueACK(hashID, 1, 3, 2)) {
+      if (txEnQueueACK(hashID, 1, testITTL, testCTTL)) {
         LOGI("ACK QUEUED");
       } else {
         LOGI("ACK DROPPED (buffer full)");
@@ -407,7 +422,7 @@ int conExec(char *conBuf, uint16_t conLen)
         memcpy(hexBuf, conBuf+3+(i<<1), 2);
         mData[i] = strtoul(hexBuf, NULL, 16) & 0xff;
       }
-      if (txEnQueueMSG(mData, i, 3, 2)) {
+      if (txEnQueueMSG(mData, i, testITTL, testCTTL)) {
         LOGI("TX QUEUED");
       } else {
         LOGI("TX DROPPED (buffer full)");
