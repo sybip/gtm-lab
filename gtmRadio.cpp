@@ -517,11 +517,21 @@ void gtmlabLoop()
     if (((prev_IRQ1 & 0x03)==0x03) && ((curr_IRQ1 & 0x03)!=0x03)) {
       if ((radioLen > 0) && !((curr_IRQ2 & 0x04)==0x04)) {
         // lost sync while receiving packet - NOT GOOD
-        LOGI("LOSTSYNC at pos %d/%d, t=%d", radioLen-1, radioBuf[0], (millis()-pktStart));
-#if 0  // this may be doing more harm than good
-        resetState();
-        // FIXME - bailout?
-#endif
+        // Read RSSI (debug purposes only)
+        pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
+        LOGI("LOSTSYNC %sCh=%02d pos %d/%d, RSSI=-%d t=%d", 
+              (recvData ? "D":"C"), currChan, 
+              radioLen-1, radioBuf[0], 
+              pktRSSI>>1, (millis()-pktStart));
+
+        // From practical observations, LOSTSYNC on a control chan
+        //   usually indicates a bad "packet size" byte, which is 
+        //   a hard one to recover from.
+        // Abandon this packet and get ready for next one ASAP
+        if ((!recvData) && radioBuf[0] > 16) {  // normal size=15
+          resetState();
+          return;  // BAILOUT
+        }
       }
     }
 
@@ -591,7 +601,10 @@ void gtmlabLoop()
   if ((pktStart > 0) && (millis()-pktStart > PKT_TIMEOUT)) {
     // Read RSSI (debug purposes only)
     pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
-    LOGI("PKTSTALL RSSI=-%d (t=%d)", pktRSSI>>1, millis()-pktStart);
+    LOGI("PKTSTALL %sCh=%02d pos %d/%d, RSSI=-%d (t=%d)",
+          (recvData ? "D":"C"), currChan, 
+          radioLen-1, radioBuf[0], 
+          pktRSSI>>1, millis()-pktStart);
     resetState();
     return;
   }
