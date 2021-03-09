@@ -138,6 +138,8 @@ bytes mean). All message classes are received, including encrypted messages.
 These objects can be further processed on the computer using a Python or PERL 
 script to study the format of the packets and extract useful information.
 
+Example: [metalogger](https://gist.github.com/sybip/4b754010cf5a667c161f3ae3d8d106ef)
+
 ### Test console
 Implemented in the `playHarder.cpp` file and documented inline, and subject 
 to continuous breaking changes.
