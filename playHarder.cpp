@@ -15,7 +15,7 @@
 // -----------------------
 //  do you even lift? :)
 
-#define PLAY_VER 2021030501   // Playground version
+#define PLAY_VER 2021031002   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -42,7 +42,7 @@ uint8_t testCTTL = 2;   // current TTL for test messages
 
 // Assembles and sends a "shout" message with the supplied string as message body
 // (thanks to https://gitlab.com/almurphy for the Arduino implementation)
-int testShoutTx(char * msgBody, uint16_t msgLen, bool direct = false)
+int testShoutTx(char * msgBody, uint16_t msgLen, int argAppID=-1, bool compatGTA=true, bool direct = false)
 {
   uint32_t time32 = now();
   uint8_t mData[300];  // message buffer (for a small message)
@@ -50,9 +50,12 @@ int testShoutTx(char * msgBody, uint16_t msgLen, bool direct = false)
   uint8_t blobPos = 0;
 
   // Message class and App ID
+  if (argAppID < 0) {
+    argAppID = appID;  // use default
+  }
   mData[mPos++] = MSG_CLASS_SHOUT;
-  mData[mPos++] = (appID >> 8) & 0xff;  // AppID MSB
-  mData[mPos++] = appID & 0xff;         // AppID LSB
+  mData[mPos++] = (argAppID >> 8) & 0xff;  // AppID MSB
+  mData[mPos++] = argAppID & 0xff;         // AppID LSB
 
   // No destination element, skip to HEAD element
   mData[mPos++] = 0xfb;  // Type of HEAD element: 0xFB
@@ -77,20 +80,26 @@ int testShoutTx(char * msgBody, uint16_t msgLen, bool direct = false)
   mData[mPos++] = 1;  // seq0
   mData[mPos++] = 1;  // seq1
 
-  // GTA Message body TLVs
+  // blob starts here
   blobPos = mPos;
 
-  // MSGB_TLV_TYPE
-  memcpy(mData+mPos, "\x01\x01\x30", 3);
-  mPos += 3;
+  if (compatGTA) {
+    // GTA compatible - use TLV elements
 
-  // MSGB_TLV_NICK
-  memcpy(mData+mPos, "\x03\x02\x3a\x29", 4);
-  mPos += 4;
+    // MSGB_TLV_TYPE
+    memcpy(mData+mPos, "\x01\x01\x30", 3);
+    mPos += 3;
 
-  // MSGB_TLV_TEXT
-  mData[mPos++] = 4;
-  mData[mPos++] = msgLen;
+    // MSGB_TLV_NICK
+    memcpy(mData+mPos, "\x03\x02\x3a\x29", 4);
+    mPos += 4;
+
+    // MSGB_TLV_TEXT
+    mData[mPos++] = 4;
+    mData[mPos++] = msgLen;
+  }
+
+  // Here comes the actual payload
   memcpy(mData+mPos, msgBody, msgLen);
   mPos += msgLen;
 
@@ -140,7 +149,7 @@ int testMessage(uint16_t msgLen)
   if (msgLen == 0)
     msgLen = random(230);
 
-  char mBody[256];
+  char mBody[256] = {0};
 
   sprintf(mBody, "L=%03d:", msgLen);
   for (int i=6; i<msgLen; i++) {
@@ -151,6 +160,39 @@ int testMessage(uint16_t msgLen)
   testShoutTx(mBody, msgLen);
 }
 
+// ATAK PLI beacon code, stolen from:
+// https://gitlab.com/almurphy/ESP32GTM/-/blob/master/examples/03-atak-beacon/03-atak-beacon.ino
+
+#define BCAST_INTERVAL 60  // seconds
+
+// CoT identity variables
+char selfUUID[] = "gtm-lab-1234-1234";  // should be unique
+char callSign[] = "GTM-LAB";            // should be personalized
+char unitType[] = "a-f-G-U-C";  // friendly-ground-unit-combat
+char unitTeam[] = "Red";        // Oh YES
+
+// CoT position variables, populated with some dummy data
+// (in production, these should be updated from the GPS receiver!)
+int64_t gpsLAT = 51948900;     // microdeg
+int64_t gpsLON = 4053500;      // microdeg
+int64_t gpsHAE = 1000;         // millimeters
+bool gpsFix = true;
+
+int testTakPLI()
+{
+  char gtmCoT[256] = {0};
+  snprintf(gtmCoT, 200, "%s;%s;%s;%s;%.06f;%.06f;%.03f;%s;%d",
+           selfUUID, unitType, callSign, 
+           gpsFix ? "m-g" : ((gpsLON || gpsLAT) ? "h-e" : "h-g-i-g-o"),
+           gpsLAT/1000000., gpsLON/1000000., gpsHAE/1000.,
+           unitTeam, BCAST_INTERVAL);
+
+  // Display, then broadcast the compressed CoT message
+  LOGI("SENDING: %s", gtmCoT);
+
+  // use ATAK appID, DO NOT include GTA COMPAT TLVs
+  testShoutTx(gtmCoT, strlen(gtmCoT), 0xd8ff, false);
+}
 
 // Console input handler
 // executed for each line received on the serial console
@@ -213,6 +255,7 @@ int conExec(char *conBuf, uint16_t conLen)
   //  !tm = transmit a random shout using queue
   //     !tmXX = specify body size (in HEX)
   //  !tx = transmit a data object supplied in HEX
+  //  !tk = transmit a TAK PLI beacon
   //
   if (conBuf[1] == 'l') {
     if (conBuf[2] == 'v') {
@@ -439,6 +482,10 @@ int conExec(char *conBuf, uint16_t conLen)
       } else {
         testMessage(0);
       }
+
+    } else if (conBuf[2] == 'k') {
+      // TEST/ATAK - send a random ATAK PLI message
+      testTakPLI();
     }
 
   } else {
