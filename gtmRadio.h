@@ -48,6 +48,7 @@ struct regSet {
 
 // state variables, from gtmRadio.cpp
 extern bool scanning;
+extern bool holdchan;       // if true, stay on this chan
 extern bool inTXmode;
 extern bool recvData;       // if true, we are on a data chan
 extern uint8_t currChan;    // current channel NUMBER
@@ -58,6 +59,7 @@ extern regSet regSets[];
 extern regSet * curRegSet;
 extern uint8_t txSyncDelay;   // millis to wait between sync packet and first data packet
 extern uint8_t txPackDelay;   // millis to wait between data packets
+extern esp_log_level_t logLevel;
 
 // event handler functions
 extern bool (* onRxMSG)(uint8_t *, uint16_t, uint8_t, uint8_t, uint8_t);

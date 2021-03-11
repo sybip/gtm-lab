@@ -146,6 +146,7 @@ uint8_t lastCurTTL;  // for standardized output
 
 // Channel hopping related variables
 bool scanning = true;
+bool holdchan = false;  // if true, stay on this chan
 bool inTXmode = false;
 bool recvData = false;  // if true, we are on a data chan
 uint8_t currChan = 0;   // current channel NUMBER
@@ -157,6 +158,7 @@ unsigned long lastCChAct[4] = { 0, 0, 0, 0 };
 bool relaying = DFLT_RELAY;  // enable mesh relay function
 
 // Timing related variables
+esp_log_level_t logLevel = VERBOSITY;  // in case we want to query it
 unsigned long pktStart = 0;   // millis when packet RX started
 unsigned long dataStart = 0;  // millis when data RX started
 unsigned long lastHop = 0;    // millis when we last hopped channel
@@ -317,7 +319,6 @@ void setChan(uint8_t chan)
 void setDataChanX(uint8_t dChanX)
 {
   dChanX %= curRegSet->dChanNum;
-  //setChan(dataChans[dChanX]);
   setChan(curRegSet->dChanMap[dChanX]);
 }
 
@@ -349,7 +350,7 @@ void resetState()
   // switch to RX mode in case we're not
   LoRa.writeRegister(REG_OP_MODE, MODE_RX_CONTINUOUS);
 
-  scanning = true;    // cycling through ctrl chans 
+  scanning = true;    // cycling through ctrl chans
   inTXmode = false;   // we're not in a transmission
   recvData = false;   // we're not receiving data
   pktStart = 0;   // we're not receiving a packet
@@ -362,7 +363,8 @@ void resetState()
   while (!((LoRa.readRegister(REG_IRQ_FLAGS_2)) & 0x40))
     LoRa.readRegister(REG_FIFO);
 
-  setCtrlChan();
+  if (!holdchan)
+    setCtrlChan();
 }
 
 
@@ -468,7 +470,7 @@ void gtmlabLoop()
   if ((curr_IRQ1 != prev_IRQ1) || (curr_IRQ2 != prev_IRQ2)) {
     // Something changed in the IRQ registers
 
-    LOGV("%s-%s-%s",
+    LOGV("%s:%s:%s",
           (curr_IRQ1 & 0x02) ? "PR":"--",
           (curr_IRQ1 & 0x01) ? "SW":"--",
           (curr_IRQ2 & 0x04) ? "PL":"--");          
@@ -519,8 +521,9 @@ void gtmlabLoop()
         // lost sync while receiving packet - NOT GOOD
         // Read RSSI (debug purposes only)
         pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
-        LOGI("LOSTSYNC %sCh=%02d pos %d/%d, RSSI=-%d t=%d", 
-              (recvData ? "D":"C"), currChan, 
+        LOGI("LOSTSYNC %cCh=%02d pos %d/%d, RSSI=-%d t=%d", 
+              holdchan ? '*' : (recvData ? 'D':'C'), 
+              currChan, 
               radioLen-1, radioBuf[0], 
               pktRSSI>>1, (millis()-pktStart));
 
@@ -595,14 +598,19 @@ void gtmlabLoop()
     }
   }
 
+  // flexible packet timeout: if in verbose mode, allow
+  //   some extra time for the serial output (up to 50 ms)
+#define FLEX_TIMEOUT ((logLevel < ESP_LOG_VERBOSE) ? PKT_TIMEOUT : 50)
+
   // If a packet reception doesn't complete in this time, 
   //  it never will; reset state immediately to hopefully
   //  pick up a retransmission
-  if ((pktStart > 0) && (millis()-pktStart > PKT_TIMEOUT)) {
+  if ((pktStart > 0) && (millis()-pktStart > FLEX_TIMEOUT)) {
     // Read RSSI (debug purposes only)
     pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
-    LOGI("PKTSTALL %sCh=%02d pos %d/%d, RSSI=-%d (t=%d)",
-          (recvData ? "D":"C"), currChan, 
+    LOGI("PKTSTALL %cCh=%02d pos %d/%d, RSSI=-%d (t=%d)",
+          holdchan ? '*' : (recvData ? 'D':'C'), 
+          currChan, 
           radioLen-1, radioBuf[0], 
           pktRSSI>>1, millis()-pktStart);
     resetState();
@@ -638,8 +646,10 @@ void gtmlabLoop()
           }
       }
       // otherwise, just HOP
-      setCtrlChan();
-      lastHop = millis();
+      if (!holdchan) {
+        setCtrlChan();
+        lastHop = millis();
+      }
     }
   }
 }
@@ -670,12 +680,11 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
   rxLen-=2;
 
   // formatted channel information for debug output
+  // DCh = data, CCh = ctrl, *Ch = user entered
   char chanDesc[16];
-  if (recvData) {
-    sprintf(chanDesc, "RX DCh=%02d", currChan);
-  } else {
-    sprintf(chanDesc, "RX CCh=%02d", currChan);
-  }
+  sprintf(chanDesc, "RX %cCh=%02d", 
+          holdchan ? '*' : (recvData ? 'D':'C'), 
+          currChan);
 
   // First byte is raw packet length (ignorable by now)
   // Second byte is packet type
@@ -683,15 +692,19 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
     // SYNC packet, indicates the begining of a data packet
     LOGI("%s SYNC(1): chIDX=%d, frags=%d, iniTTL=%d, curTTL=%d", 
       chanDesc, rxBuf[2], rxBuf[3], rxBuf[4], rxBuf[5]);
-      currDChIdx = rxBuf[2];
-      wantFrags = rxBuf[3];
-      // Save a copy
-      lastIniTTL = rxBuf[4];
-      lastCurTTL = rxBuf[5];
-      LoRa.writeRegister(REG_PREAMBLE_DETECT, 0xaa); // 2 bytes
-      setDataChanX(++currDChIdx);
-      dataStart = millis();
-      recvData = true;
+
+      // hop to receive data (unless channel hold is engaged)
+      if (!holdchan) {
+        currDChIdx = rxBuf[2];
+        wantFrags = rxBuf[3];
+        // Save a copy
+        lastIniTTL = rxBuf[4];
+        lastCurTTL = rxBuf[5];
+        LoRa.writeRegister(REG_PREAMBLE_DETECT, 0xaa); // 2 bytes
+        setDataChanX(++currDChIdx);
+        dataStart = millis();
+        recvData = true;
+      }
 
   } else if (rxBuf[1] == PKT_TYPE_TIME) {
     // TIME packet, log for now but don't act
@@ -749,7 +762,9 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
 
     if (wantFrags) {
       // hop to next data channel to receive more fragments
-      setDataChanX(++currDChIdx);
+      if (!holdchan) {
+        setDataChanX(++currDChIdx);
+      }
 
     } else {
       // no more frags; output packet and hop to control channel
@@ -990,7 +1005,6 @@ int txSendAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
 
   // setCtrlChanTX();  // jump to a FREE control channel
   // CCH already set from main loop, just stay on it
-  // setChan(ctrlChans[currCChIdx]); 
   setChan(curRegSet->cChanMap[currCChIdx]); 
 
   LOGI("TX CCh=%02d ACK (3): hash=0x%04x, hops=%d, iniTTL=%d, curTTL=%d", 
@@ -1027,6 +1041,12 @@ int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
   uint8_t oLen = 0;    // output length
 
   uint8_t nFrags = ceil(1.0 * mLen / TXFRAGSIZE);
+
+  // if channel hold engaged, we can't transmit, so bail out
+  if (holdchan) {
+    LOGW("TX disabled due to channel hold");
+    return -1;
+  }
 
   // calculate message hash
   uint16_t msgH16 = msgHash16(mBuf);

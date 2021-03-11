@@ -15,7 +15,7 @@
 // -----------------------
 //  do you even lift? :)
 
-#define PLAY_VER 2021031002   // Playground version
+#define PLAY_VER 2021031102   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -247,6 +247,7 @@ int conExec(char *conBuf, uint16_t conLen)
   //  -----
   //  !h0 = control chan scanning pause
   //  !h1 = control chan scanning resume
+  //  !h2 = hold current chan and never move away
   //  -----
   //  !td = transmit a random ACK packet directly
   //  !tt = transmit a TIME packet directly
@@ -255,25 +256,26 @@ int conExec(char *conBuf, uint16_t conLen)
   //  !tm = transmit a random shout using queue
   //     !tmXX = specify body size (in HEX)
   //  !tx = transmit a data object supplied in HEX
-  //  !tk = transmit a TAK PLI beacon
+  //  !tk = transmit an ATAK PLI packet
   //
   if (conBuf[1] == 'l') {
     if (conBuf[2] == 'v') {
-      esp_log_level_set("*", ESP_LOG_VERBOSE);
+      logLevel = ESP_LOG_VERBOSE;
       LOGI("SET_LOG: VERBOSE");
     } else if (conBuf[2] == 'd') {
-      esp_log_level_set("*", ESP_LOG_DEBUG);
+      logLevel = ESP_LOG_DEBUG;
       LOGI("SET_LOG: DEBUG");
     } else if (conBuf[2] == 'i') {
-      esp_log_level_set("*", ESP_LOG_INFO);
+      logLevel = ESP_LOG_INFO;
       LOGI("SET_LOG: INFO");
     } else if (conBuf[2] == 'w') {
-      esp_log_level_set("*", ESP_LOG_WARN);
+      logLevel = ESP_LOG_WARN;
       LOGI("SET_LOG: WARN");
     } else if (conBuf[2] == 'e') {
-      esp_log_level_set("*", ESP_LOG_ERROR);
+      logLevel = ESP_LOG_ERROR;
       LOGI("SET_LOG: ERROR");
     }
+    esp_log_level_set("*", logLevel);
 
   } else if (conBuf[1] == 'm') {
     scanning = false;
@@ -303,10 +305,16 @@ int conExec(char *conBuf, uint16_t conLen)
   } else if (conBuf[1] == 'h') {
     if (conBuf[2] == '0') {
       scanning = false;
+      holdchan = false;
     } else if (conBuf[2] == '1') {
       scanning = true;
+      holdchan = false;
+    } else if (conBuf[2] == '2') {
+      scanning = false;
+      holdchan = true;
     }
     LOGI("SCANNING is now %s", (scanning ? "ON":"OFF"));
+    LOGI("HOLDCHAN is now %s", (holdchan ? "ON":"OFF"));
 
   } else if (conBuf[1] == 'c') {
       memcpy(hexBuf, conBuf+2, 2);
@@ -401,7 +409,9 @@ int conExec(char *conBuf, uint16_t conLen)
     } else if (conBuf[2] == 's') {
       // READ STATE VARIABLES
       printf("PLAY_VER: %d\n", PLAY_VER);
+      printf("LOGLEVEL: %d\n", logLevel);
       printf("SCANNING: %s\n", scanning ? "ON":"OFF");
+      printf("HOLDCHAN: %s\n", holdchan ? "ON":"OFF");
       printf("RECVDATA: %s\n", recvData ? "ON":"OFF");
       printf("INTXMODE: %s\n", inTXmode ? "ON":"OFF");
       printf("CURRCHAN: %d\n", currChan);
