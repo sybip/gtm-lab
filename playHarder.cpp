@@ -213,50 +213,7 @@ int conExec(char *conBuf, uint16_t conLen)
   }
 
   // implement a (very basic) command console
-  // available commands:
-  //  !lv = set logging level to VERBOSE
-  //  !ld = set logging level to DEBUG
-  //  !li = set logging level to INFO
-  //  !lw = set logging level to WARNING
-  //  !le = set logging level to ERROR
-  //  -----
-  //  !m0 = set radio SLEEP mode
-  //  !m1 = set radio STANDBY mode
-  //  !mr = set radio RX mode
-  //  !mt = set radio TX mode
-  //    (all !m commands will also pause chan scanning)
-  //  -----
-  //  !sgX = set geopolitical region to X (1,2,4,8)
-  //  !spDD = set TX power dBm (DD in decimal 00 - 20)
-  //  !sr0 = set mesh relay function OFF
-  //  !sr1 = set mesh relay function ON
-  //  !saXXXX = set App ID to XXXX (in HEX)
-  //  !stXY = set TTL for test msgs: init=X, curr=Y
-  //  -----
-  //  !da = dump ALL radio registers
-  //  !di = dump ISR registers
-  //  !df = dump entire FIFO content
-  //      (use !dr00 to read one FIFO byte)
-  //  !drXX = dump radio register XX (in HEX)
-  //  !ds = dump state variables (incomplete)
-  //  -----
-  //  !wXXYY = write to radio register XX value YY
-  //      (XX and YY in HEX)
-  //  -----
-  //  !cDD = change channel (DD in decimal)
-  //  -----
-  //  !h0 = control chan scanning pause
-  //  !h1 = control chan scanning resume
-  //  !h2 = hold current chan and never move away
-  //  -----
-  //  !td = transmit a random ACK packet directly
-  //  !tt = transmit a TIME packet directly
-  //  !ta = transmit a random ACK packet using queue
-  //     !taXXXX = specify hash ID (in HEX)
-  //  !tm = transmit a random shout using queue
-  //     !tmXX = specify body size (in HEX)
-  //  !tx = transmit a data object supplied in HEX
-  //  !tk = transmit an ATAK PLI packet
+  // see playHarder.md for command reference
   //
   if (conBuf[1] == 'l') {
     if (conBuf[2] == 'v') {
@@ -425,10 +382,12 @@ int conExec(char *conBuf, uint16_t conLen)
       printf("MY_APPID: 0x%04x\n", appID);
 
     } else if (conBuf[2] == 'r') {
-      memcpy(hexBuf, conBuf+3, 2);
-      wReg = strtoul(hexBuf, NULL, 16) & 0xff;
-      wVal = LoRa.readRegister(wReg);
-      printf("0x%02x | 0x%02x | "BYTE_TO_BINARY_PATTERN"\n", wReg, wVal, BYTE_TO_BINARY(wVal));
+      if (conLen == 5) {
+        memcpy(hexBuf, conBuf+3, 2);
+        wReg = strtoul(hexBuf, NULL, 16) & 0xff;
+        wVal = LoRa.readRegister(wReg);
+        printf("0x%02x | 0x%02x | "BYTE_TO_BINARY_PATTERN"\n", wReg, wVal, BYTE_TO_BINARY(wVal));
+      }
     }
 
   } else if (conBuf[1] == 'w') {
