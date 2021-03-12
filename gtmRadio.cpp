@@ -104,8 +104,8 @@ int freqdev = 12500;
 
 // Some constants related to radio timings etc,
 // Determined mostly through trial-and-error
-#define RX_TIMEOUT 400 // millis
 #define PKT_TIMEOUT 40 // millis
+#define PRE_TIMEOUT 20  // data channel preable timeout
 #define CCH_SILENCE 40 // millis
 #define SCAN_DWELL 10  // millis
 #define FIFOSIZE 64  // actually 66, but leave a margin
@@ -161,7 +161,8 @@ bool relaying = DFLT_RELAY;  // enable mesh relay function
 esp_log_level_t logLevel = VERBOSITY;  // in case we want to query it
 unsigned long pktStart = 0;   // millis when packet RX started
 unsigned long dataStart = 0;  // millis when data RX started
-unsigned long lastHop = 0;    // millis when we last hopped channel
+unsigned long lastHop = 0;    // millis when we last hopped ctrl chan
+unsigned long chanTimer = 0;  // millis when we entered current channel
 
 // RSSI, keep it simple
 uint8_t pktRSSI = 0;  // absolute value; RSSI = -RssiValue/2[dBm]
@@ -304,6 +305,8 @@ void setChan(uint8_t chan)
     if ((curr_IRQ1 & 0x90) == 0x90)
       locked = true;
   }
+
+  chanTimer = millis();
 
   if (inTXmode || (!scanning)) {
     // don't pollute the log with control channel scanning hops
@@ -470,14 +473,12 @@ void gtmlabLoop()
   if ((curr_IRQ1 != prev_IRQ1) || (curr_IRQ2 != prev_IRQ2)) {
     // Something changed in the IRQ registers
 
-    LOGV("%s:%s:%s",
+    LOGV("IRQs: "BYTE_TO_BINARY_PATTERN" "BYTE_TO_BINARY_PATTERN" %s:%s:%s", 
+             BYTE_TO_BINARY(curr_IRQ1),
+             BYTE_TO_BINARY(curr_IRQ2),
           (curr_IRQ1 & 0x02) ? "PR":"--",
           (curr_IRQ1 & 0x01) ? "SW":"--",
           (curr_IRQ2 & 0x04) ? "PL":"--");          
-
-    LOGV("IRQs: "BYTE_TO_BINARY_PATTERN" "BYTE_TO_BINARY_PATTERN, 
-             BYTE_TO_BINARY(curr_IRQ1),
-             BYTE_TO_BINARY(curr_IRQ2));
 
     // First check preamble, then syncword, then payready
     // The order is IMPORTANT - that's why we need a FSM
@@ -598,6 +599,20 @@ void gtmlabLoop()
     }
   }
 
+  // in recvData mode, we just jumped on a data chan and are 
+  //   currently waiting for a preamble?
+  // if we missed the preamble, make sure we don't wait forever
+  if (recvData && (! (curr_IRQ1 & 0x02)) && 
+      (millis() - chanTimer > PRE_TIMEOUT)) {
+    pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
+    LOGI("PRESTALL %cCh=%02d, RSSI=-%d (t=%d)",
+          holdchan ? '*' : (recvData ? 'D':'C'), 
+          currChan,
+          pktRSSI>>1, millis()-chanTimer);
+    resetState();   // BAILOUT
+    return;
+  }
+
   // flexible packet timeout: if in verbose mode, allow
   //   some extra time for the serial output (up to 50 ms)
 #define FLEX_TIMEOUT ((logLevel < ESP_LOG_VERBOSE) ? PKT_TIMEOUT : 50)
@@ -658,7 +673,8 @@ void gtmlabLoop()
 // called from radio receiver for each good packet received
 int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
 {
-  ESP_LOG_BUFFER_HEXDUMP(TAG, rxBuf, rxLen, ESP_LOG_VERBOSE);
+  // this is redundant
+  // ESP_LOG_BUFFER_HEXDUMP(TAG, rxBuf, rxLen, ESP_LOG_VERBOSE);
 
   uint16_t msgH16;
 
