@@ -15,7 +15,7 @@
 // -----------------------
 //  do you even lift? :)
 
-#define PLAY_VER 2021031102   // Playground version
+#define PLAY_VER 2021031201   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -24,6 +24,10 @@
 #define MSGB_TLV_GDST 0x05    // Destination GID in group messages
 #define MSGB_TLV_LCTN 0x06    // Location object
 #define MSGB_TLV_PUBK 0xfc    // Public key object
+
+// Serial port speed
+#define SERIAL_SPEED_HIGH 1000000  // high speed - 1Mbps
+#define SERIAL_SPEED_NORM 115200  // "normal" speed - 115200
 
 // Logging functions and options
 #define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE  // DO NOT EDIT THIS LINE
@@ -206,7 +210,7 @@ int conExec(char *conBuf, uint16_t conLen)
   uint8_t xChan = 0;
   uint8_t mData[256];  // message buffer (for a small message)
 
-  if (conBuf[0] != '!') {
+  if (conLen && (conBuf[0] != '!')) {
     // take text from conBuf and shout it
     testShoutTx(conBuf, conLen);
     return(0);
@@ -336,13 +340,32 @@ int conExec(char *conBuf, uint16_t conLen)
 
     } else if (conBuf[2] == 't') {
       if (conLen == 5) {
-        // message length was provided
         memcpy(hexBuf, conBuf+3, 2);
         wVal = strtoul(hexBuf, NULL, 16) & 0xff;
         testITTL = (wVal >> 4) & 0x0f;
         testCTTL = wVal & 0x0f;
         LOGI("Test iniTTL=%d, curTTL=%d", testITTL, testCTTL);
       }
+
+    } else if (conBuf[2] == 's') {
+      if (conBuf[3] == 'n') {
+        LOGW("CHANGE console speed to %dbps NOW", SERIAL_SPEED_NORM);
+        LOGW("------");
+        delay(10);
+        Serial.end();
+        delay(10);
+        Serial.begin(SERIAL_SPEED_NORM);
+      } else if (conBuf[3] == 'h') {
+        LOGW("CHANGE console speed to %dbps NOW", SERIAL_SPEED_HIGH);
+        LOGW("------");
+        delay(10);
+        Serial.end();
+        delay(10);
+        Serial.begin(SERIAL_SPEED_HIGH);
+      }
+      while (!Serial);
+      while (Serial.available())
+        Serial.read();
     }
 
   } else if (conBuf[1] == 'd') {
