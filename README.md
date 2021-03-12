@@ -141,8 +141,9 @@ script to study the format of the packets and extract useful information.
 Example: [metalogger](https://gist.github.com/sybip/4b754010cf5a667c161f3ae3d8d106ef)
 
 ### Test console
-Implemented in the `playHarder.cpp` file and documented inline, and subject 
-to continuous breaking changes.
+Implemented in the `playHarder.cpp` file and documented in 
+[playHarder.md](https://github.com/sybip/gtm-lab/blob/main/playHarder.md), 
+and subject to continuous breaking changes.
 
 ## Documentation and further info
 All technical information relevant to this project is (or will be) published 
