@@ -141,6 +141,7 @@ uint8_t txMsgPos = 0;
 
 // Useful values from last sync packet
 uint8_t wantFrags = 0; // Number of fragments we expect
+uint8_t dataFrags = 0; // Number of fragments we expect
 uint8_t lastIniTTL;  // for standardized output
 uint8_t lastCurTTL;  // for standardized output
 
@@ -167,6 +168,7 @@ unsigned long chanTimer = 0;  // millis when we entered current channel
 // RSSI, keep it simple
 uint8_t pktRSSI = 0;  // absolute value; RSSI = -RssiValue/2[dBm]
 uint8_t cChRSSI = 0;  // control chan RSSI (for LBT)
+uint16_t sumDChRSSI = 0;  // sum of data channel RSSI, for averaging
 
 // Interrupt Status Registers - stored previous values
 uint8_t prev_IRQ1 = 0, prev_IRQ2 = 0;
@@ -582,7 +584,7 @@ void gtmlabLoop()
         if (rs.Decode(radioBuf, radioDec) == 0) {
           LOGD("REEDSOLO");
           // Packet OK, send it for further processing
-          rxPacket(radioDec, radioLen-8);
+          rxPacket(radioDec, radioLen-8, pktRSSI>>1);
         } else {
           LOGD("REEDSOLO FAIL");  // bail out
           resetState();
@@ -671,7 +673,8 @@ void gtmlabLoop()
 
 
 // called from radio receiver for each good packet received
-int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
+//   (uRSSI = unsigned RSSI)
+int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
 {
   // this is redundant
   // ESP_LOG_BUFFER_HEXDUMP(TAG, rxBuf, rxLen, ESP_LOG_VERBOSE);
@@ -712,10 +715,12 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
       // hop to receive data (unless channel hold is engaged)
       if (!holdchan) {
         currDChIdx = rxBuf[2];
-        wantFrags = rxBuf[3];
+        dataFrags = wantFrags = rxBuf[3];
         // Save a copy
         lastIniTTL = rxBuf[4];
         lastCurTTL = rxBuf[5];
+        sumDChRSSI = 0;  // reset sum
+        //
         LoRa.writeRegister(REG_PREAMBLE_DETECT, 0xaa); // 2 bytes
         setDataChanX(++currDChIdx);
         dataStart = millis();
@@ -776,6 +781,8 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
     packetLen += rxBuf[2];
     wantFrags--;
 
+    sumDChRSSI += uRSSI;
+
     if (wantFrags) {
       // hop to next data channel to receive more fragments
       if (!holdchan) {
@@ -786,7 +793,9 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
       // no more frags; output packet and hop to control channel
       // ...but first, calculate GTH16 hash
       msgH16 = msgHash16(packetBuf);
-      LOGI("RX complete: len=%d, hash=0x%04x, time=%dms", packetLen, msgH16, (millis()-dataStart));
+      LOGI("RX complete: len=%d, hash=0x%04x, time=%dms, RSSI=-%d", 
+           packetLen, msgH16, (millis()-dataStart), 
+           int(sumDChRSSI/(double)dataFrags));
 
       if (inRingBuf(msgH16, rxMsgBuf)) {
         LOGI("MSG SEEN BEFORE");
@@ -796,7 +805,8 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen)
 
         // New message received - call external handler if defined
         if ((* onRxMSG) != nullptr) {
-          if (! onRxMSG(packetBuf, packetLen, lastIniTTL, lastCurTTL, pktRSSI)) {
+          if (! onRxMSG(packetBuf, packetLen, lastIniTTL, lastCurTTL, 
+                        int(sumDChRSSI/(double)dataFrags))) {
             LOGD("MSG handler failed");
           }
         }

@@ -109,7 +109,7 @@ void gtmlabInit();
 void gtmlabLoop();
 
 // called from radio receiver for each good packet received
-int rxPacket(uint8_t * rxBuf, uint8_t rxLen);
+int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI);
 
 
 // Prepares the radio and state buffers for transmitting one or more packets
