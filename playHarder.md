@@ -27,11 +27,13 @@ Arguments in **bold** are mandatory.
 | !sa | **XXXX**      | !sa3fff | set App ID for outbound test msgs to XXXX (in HEX)
 | !st | **XY**        | !st32   | set TTL for outbound test msgs: init=X, curr=Y
 | !ss | **n/h**       | !ssh    | change serial console speed: normal/high<br/>n=115200, h=1Mbps
+| !sc | **g**         | !scg    | **[GPS]** set system clock from source: g=GPS
 | !da | -             |         | dump ALL radio registers
 | !di | -             |         | dump radio IRQ registers
 | !df | -             |         | dump entire FIFO content<br/>(use !dr00 to read one FIFO byte)
 | !ds | -             |         | dump state variables (incomplete)
 | !dr | **XX**        | !dr3e   | dump radio register XX (in HEX)
+| !dg | -             |         | **[GPS]** dump current GPS state
 | !w  | **XXYY**      | !w3520  | write to radio register XX value YY (XX and YY in HEX)
 | !c  | **DD**        | !c01    | change channel (DD in decimal)
 | !h0 | -             |         | *soft hold* - pause channel scanning until next protocol event

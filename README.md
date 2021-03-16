@@ -78,18 +78,23 @@ u-blox NEO GPS will come in handy in future experiments.
 Make sure to select the 915MHz "USA" version, which covers all goTenna Mesh 
 bands worldwide.
 
-### Software requirements
+### Build environment requirements
 [Arduino IDE](https://www.arduino.cc/en/software/) 1.8+ with [ESP32 support](https://github.com/espressif/arduino-esp32)
 
 If setting up Arduino/ESP32 for the first time, refer to the 
 [recommended installation instructions](https://github.com/espressif/arduino-esp32/blob/master/docs/arduino-ide/boards_manager.md).
 
 ### Dependencies
-The only external dependency is the **Time** library by Michael Margolis - 
-install it using the *Tools > Manage Libraries* menu option in the 
+The only external dependency is the **Time** library by Michael Margolis. 
+Install it using the *Tools > Manage Libraries* menu option in the 
 Arduino IDE.
 
 All other required libraries are included (see **Credits** section for details)
+
+### Optional libraries
+These libraries are used for optional extra functionality:
+
+- **SparkFun u-blox GNSS** library by SparkFun Electronics - for GPS functions
 
 ### Build and install
 
@@ -161,6 +166,8 @@ BM-2cW2P5qmucxH4jWP2JEyqKA12VhTJibUXL
 - [Reed-Solomon FEC library](https://github.com/simonyipeter/Arduino-FEC) 
 Copyright Mike Lubinets, Simoniy Peter, MIT license (modded to support variable length messages and 
 alternative FCRs, renamed to **RS-mod-FCR**)
+- [SparkFun u-blox GNSS Arduino Library](https://github.com/sparkfun/SparkFun_u-blox_GNSS_Arduino_Library)
+Copyright SparkFun Electronics, MIT license
 
 ### Knowledge and information
 - [Tim](https://nitter.net/bjt2n3904) and [Woody](https://nitter.net/tb69rr) made 

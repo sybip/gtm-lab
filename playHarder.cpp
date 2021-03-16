@@ -15,7 +15,32 @@
 // -----------------------
 //  do you even lift? :)
 
-#define PLAY_VER 2021031201   // Playground version
+// define USE_UBXGPS to enable and use the onboard u-blox GPS.
+// Library "SparkFun u-blox GNSS" is required for GPS functions
+// (install it in Arduino IDE using "Tools > Manage Libraries")
+//
+//#define USE_UBXGPS
+
+#ifdef USE_UBXGPS
+#include "SparkFun_u-blox_GNSS_Arduino_Library.h"
+
+// safe defaults
+#define GPS_SERIAL Serial1
+#define GPS_SPEED 9600
+
+#if BOARD_TYPE == 1
+  // GPS connection for T-Beam board
+  #define HAS_UBXGPS
+  #define GPS_PIN_RX 34
+  #define GPS_PIN_TX 12
+#endif
+
+// GPS related defines and variables
+SFE_UBLOX_GNSS myGPS;
+
+#endif  // USE_UBXGPS
+
+#define PLAY_VER 2021031502   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -46,7 +71,7 @@ uint8_t testCTTL = 2;   // current TTL for test messages
 
 // Assembles and sends a "shout" message with the supplied string as message body
 // (thanks to https://gitlab.com/almurphy for the Arduino implementation)
-int testShoutTx(char * msgBody, uint16_t msgLen, int argAppID=-1, bool compatGTA=true, bool direct = false)
+int testShoutTx(char * msgBody, uint16_t msgLen, int argAppID=-1, bool compatGTA=true, bool direct=false)
 {
   uint32_t time32 = now();
   uint8_t mData[300];  // message buffer (for a small message)
@@ -164,6 +189,14 @@ int testMessage(uint16_t msgLen)
   testShoutTx(mBody, msgLen);
 }
 
+
+// how the GPS type is reported
+#ifdef HAS_UBXGPS
+  #define GPS_TYPE "hardware"
+#else
+  #define GPS_TYPE "emulated"
+#endif
+
 // ATAK PLI beacon code, stolen from:
 // https://gitlab.com/almurphy/ESP32GTM/-/blob/master/examples/03-atak-beacon/03-atak-beacon.ino
 
@@ -180,7 +213,10 @@ char unitTeam[] = "Red";        // Oh YES
 int64_t gpsLAT = 51948900;     // microdeg
 int64_t gpsLON = 4053500;      // microdeg
 int64_t gpsHAE = 1000;         // millimeters
-bool gpsFix = true;
+uint8_t gpsSIV = 1;
+uint8_t gpsDOP = 1;
+uint8_t gpsFix = 1;
+bool gpsAct = true;
 
 int testTakPLI()
 {
@@ -196,6 +232,49 @@ int testTakPLI()
 
   // use ATAK appID, DO NOT include GTA COMPAT TLVs
   testShoutTx(gtmCoT, strlen(gtmCoT), 0xd8ff, false);
+}
+
+
+#ifdef HAS_UBXGPS
+void gpsInit()
+{
+#ifdef GPS_PIN_RX
+  GPS_SERIAL.begin(GPS_SPEED, SERIAL_8N1, GPS_PIN_RX, GPS_PIN_TX);
+#else
+  GPS_SERIAL.begin(GPS_SPEED, SERIAL_8N1);
+#endif  // GPS_PIN_RX
+
+  delay(100);  // allow port to settle
+
+  gpsAct = false;
+  for (int i=0; i<3; i++) {
+    // try to init GPS
+    if (myGPS.begin(GPS_SERIAL) == true) {
+      gpsAct = true;
+      break;
+    }
+    delay(20 * (i+1));
+  }
+
+  if (gpsAct) {
+    LOGI("GPS ACTIVE");
+    myGPS.setUART1Output(COM_TYPE_UBX); //Set the UART port to output UBX only
+    myGPS.setI2COutput(COM_TYPE_UBX);   //Set the I2C port to output UBX only (turn off NMEA noise)
+    myGPS.powerSaveMode(false);
+  }
+}
+#endif  // HAS_UBXGPS
+
+
+// Playground initialization, to be called from Arduino init()
+void playInit()
+{
+  LOGI("playground version: %d, gps type: %s", PLAY_VER, GPS_TYPE);
+
+#ifdef HAS_UBXGPS
+  // GPS initialization
+  gpsInit();
+#endif  // HAS_UBXGPS
 }
 
 // Console input handler
@@ -366,6 +445,23 @@ int conExec(char *conBuf, uint16_t conLen)
       while (!Serial);
       while (Serial.available())
         Serial.read();
+
+#ifdef HAS_UBXGPS
+    } else if (conBuf[2] == 'c') {
+        if (conBuf[3] == 'g') {  // setclock from gps
+          if (gpsAct) {
+            LOGI("SETCLOCK from GPS:");
+            LOGI("OLD TIME: %04d-%02d-%02d %02d:%02d:%02d", 
+                  year(), month(), day(), hour(), minute(), second());
+            setTime(myGPS.getHour(), myGPS.getMinute(), myGPS.getSecond(),
+                    myGPS.getDay(), myGPS.getMonth(), myGPS.getYear());
+            LOGI("NEW TIME: %04d-%02d-%02d %02d:%02d:%02d", 
+                  year(), month(), day(), hour(), minute(), second());
+          } else {
+            LOGW("GPS time unavailable");
+          }
+        }
+#endif  // HAS_UBXGPS
     }
 
   } else if (conBuf[1] == 'd') {
@@ -389,6 +485,7 @@ int conExec(char *conBuf, uint16_t conLen)
     } else if (conBuf[2] == 's') {
       // READ STATE VARIABLES
       printf("PLAY_VER: %d\n", PLAY_VER);
+      printf("GPS_TYPE: " GPS_TYPE "\n");
       printf("LOGLEVEL: %d\n", logLevel);
       printf("SCANNING: %s\n", scanning ? "ON":"OFF");
       printf("HOLDCHAN: %s\n", holdchan ? "ON":"OFF");
@@ -403,6 +500,37 @@ int conExec(char *conBuf, uint16_t conLen)
       printf("TestITTL: %d\n", testITTL);
       printf("TestCTTL: %d\n", testCTTL);
       printf("MY_APPID: 0x%04x\n", appID);
+      printf("SYS_TIME: %04d-%02d-%02d %02d:%02d:%02d\n", 
+             year(), month(), day(), hour(), minute(), second());
+#ifdef HAS_UBXGPS
+      printf("UBLOXGPS: %s\n", gpsAct ? "ON":"OFF");
+#endif  // HAS_UBXGPS
+
+#ifdef HAS_UBXGPS
+    } else if (conBuf[2] == 'g') {
+      if (gpsAct) {
+        gpsFix = myGPS.getFixType();
+
+        printf("GPS ONLINE\n");
+        printf("GPS_TIME: %04d-%02d-%02d %02d:%02d:%02d (%s)\n", 
+          myGPS.getYear(), myGPS.getMonth(), myGPS.getDay(),
+          myGPS.getHour(), myGPS.getMinute(), myGPS.getSecond(),
+          myGPS.getTimeValid() ? "VAL" : "INV");
+
+        printf("GPS_LAT : %d\nGPS_LON : %d\nGPS_HAE : %d\n",
+          myGPS.getLatitude(),  // *10E7
+          myGPS.getLongitude(), // *10E7
+          myGPS.getAltitude());  // mm
+
+        printf("GPS_DOP : %d\nGPS_SIV : %d\nGPS_FIX : %d\n", 
+          myGPS.getPDOP(),      // *100
+          myGPS.getSIV(),
+          gpsFix);
+
+      } else {
+        printf("GPS OFFLINE\n");
+      }
+#endif  // HAS_UBXGPS
 
     } else if (conBuf[2] == 'r') {
       if (conLen == 5) {
@@ -444,8 +572,13 @@ int conExec(char *conBuf, uint16_t conLen)
 
     } else if (conBuf[2] == 't') {
       // TEST/TIME - send a TIME packet DIRECTLY
+      // use system time if valid, or a hardcoded constant otherwise
       txStart();    // fire up transmitter
-      txSendTime(0x60201337);
+      if (year() > 2020) {  // system time presumed valid
+        txSendTime(now());
+      } else {  // system time invalid, send a bogon (sorry!)
+        txSendTime(0x60501337);
+      }
       resetState(); // return to RX mode
 
     } else if (conBuf[2] == 'x') {
