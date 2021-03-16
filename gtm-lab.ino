@@ -14,6 +14,7 @@ uint16_t conLen=0;
 
 // playHarder.cpp is our debug console aka the "playground"
 //  send commands received via usb serial, and stuff happens
+void playInit();
 int conExec(char *conBuf, uint16_t conLen);
 
 
@@ -26,6 +27,9 @@ void setup()
 
   // initialize radio and data structures
   gtmlabInit();
+
+  // initialize playground
+  playInit();
 }
 
 
