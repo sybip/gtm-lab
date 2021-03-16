@@ -839,11 +839,12 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
 
 
 // simple builtin MSG handler - hexlified output
-bool builtinRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t RSSI)
+// (uRSSI because the RSSI is unsigned)
+bool builtinRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI)
 {
-  // output in standardized format (inittl, curttl, | ,hexmsg)
+  // output in standardized format (inittl, curttl, uRSSI, | ,hexmsg)
   printf("RX_MSG:");
-  printf("%02x%02x|", iniTTL, curTTL);
+  printf("%02x%02x%02x|", iniTTL, curTTL, uRSSI);
   for (int i=0; i<mLen; i++)
     printf("%02x", mBuf[i]);
   printf("\n");
@@ -852,10 +853,10 @@ bool builtinRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL,
 
 
 // simple builtin ACK handler - hexlified output
-bool builtinRxACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t RSSI)
+bool builtinRxACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI)
 {
   // output in standardized format
-  printf("RX_ACK:%04x%02x%02x\n", hashID, ((hops & 0x0f)<<4) | (iniTTL & 0x0f), curTTL);
+  printf("RX_ACK:%04x%02x%02x%02x\n", hashID, ((hops & 0x0f)<<4) | (iniTTL & 0x0f), curTTL, uRSSI);
   return true;  
 }
 

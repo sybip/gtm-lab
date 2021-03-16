@@ -66,8 +66,8 @@ extern bool (* onRxMSG)(uint8_t *, uint16_t, uint8_t, uint8_t, uint8_t);
 extern bool (* onRxACK)(uint16_t, uint8_t, uint8_t, uint8_t, uint8_t);
 
 // builtin event handlers
-bool builtinRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t RSSI);
-bool builtinRxACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t RSSI);
+bool builtinRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI);
+bool builtinRxACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI);
 
 // additive CRC16 function
 uint16_t CRC16_add(uint8_t b, uint16_t crc = 0);
