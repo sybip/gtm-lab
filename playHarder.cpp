@@ -19,7 +19,7 @@
 // Library "SparkFun u-blox GNSS" is required for GPS functions
 // (install it in Arduino IDE using "Tools > Manage Libraries")
 //
-//#define USE_UBXGPS
+#define USE_UBXGPS
 
 #ifdef USE_UBXGPS
 #include "SparkFun_u-blox_GNSS_Arduino_Library.h"
@@ -40,7 +40,7 @@ SFE_UBLOX_GNSS myGPS;
 
 #endif  // USE_UBXGPS
 
-#define PLAY_VER 2021031502   // Playground version
+#define PLAY_VER 2021031901   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -55,15 +55,7 @@ SFE_UBLOX_GNSS myGPS;
 #define SERIAL_SPEED_NORM 115200  // "normal" speed - 115200
 
 // Logging functions and options
-#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE  // DO NOT EDIT THIS LINE
 #define TAG "GTMLAB"
-#include "esp_log.h"
-
-#define LOGE( format, ... ) ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR,   TAG, format, ##__VA_ARGS__)
-#define LOGW( format, ... ) ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN,    TAG, format, ##__VA_ARGS__)
-#define LOGI( format, ... ) ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO,    TAG, format, ##__VA_ARGS__)
-#define LOGD( format, ... ) ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG,   TAG, format, ##__VA_ARGS__)
-#define LOGV( format, ... ) ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, format, ##__VA_ARGS__)
 
 uint16_t appID = DFLT_APPID;  // defined in gtmConfig.h
 uint8_t testITTL = 3;   // initial TTL for test messages
@@ -148,7 +140,7 @@ int testShoutTx(char * msgBody, uint16_t msgLen, int argAppID=-1, bool compatGTA
 
   LOGI("TX DATASIZE=%d", mPos);
 
-  ESP_LOG_BUFFER_HEXDUMP(TAG, mData, mPos, ESP_LOG_DEBUG);
+  HEXD(TAG, mData, mPos);
 
   if (direct) {
     // SEND DIRECTLY (don't "Listen-Before")
@@ -213,10 +205,10 @@ char unitTeam[] = "Red";        // Oh YES
 int64_t gpsLAT = 51948900;     // microdeg
 int64_t gpsLON = 4053500;      // microdeg
 int64_t gpsHAE = 1000;         // millimeters
-uint8_t gpsSIV = 1;
-uint8_t gpsDOP = 1;
-uint8_t gpsFix = 1;
-bool gpsAct = true;
+uint8_t gpsSIV = 1;   // satellites in view
+uint8_t gpsDOP = 1;   // point dillution of precision
+uint8_t gpsFix = 1;   // gps fix type
+bool gpsAct = true;   // gps is ACTIVE
 
 int testTakPLI()
 {
@@ -253,7 +245,7 @@ void gpsInit()
       gpsAct = true;
       break;
     }
-    delay(20 * (i+1));
+    delay(100 * (i+1));
   }
 
   if (gpsAct) {

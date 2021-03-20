@@ -13,17 +13,6 @@
 #include "RS-mod-FCR.h"
 #include "gtmRadio.h"
 
-// Logging functions and options
-#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE  // DO NOT EDIT THIS LINE
-#define TAG "GTMLIB"
-#include "esp_log.h"
-
-#define LOGE( format, ... ) ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR,   TAG, format, ##__VA_ARGS__)
-#define LOGW( format, ... ) ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN,    TAG, format, ##__VA_ARGS__)
-#define LOGI( format, ... ) ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO,    TAG, format, ##__VA_ARGS__)
-#define LOGD( format, ... ) ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG,   TAG, format, ##__VA_ARGS__)
-#define LOGV( format, ... ) ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, format, ##__VA_ARGS__)
-
 // HARDWARE SETTINGS
 #if BOARD_TYPE==1
 #define pinCS 18   // LoRa radio chip select
@@ -43,6 +32,8 @@
 #error "Invalid BOARD_TYPE"
 #endif
 
+// Logging functions and options
+#define TAG "GTMLIB"
 
 regSet regSets[] = {
   // REGION=US
@@ -275,7 +266,7 @@ void dumpRegisters(int logLevel)
     if (logLevel<0) {
       printf("0x%02x | 0x%02x | "BYTE_TO_BINARY_PATTERN"\n", i, rVal, BYTE_TO_BINARY(rVal));
     } else {
-      ESP_LOG_LEVEL_LOCAL(logLevel, TAG, 
+      LOG_(logLevel, TAG, 
         "0x%02x | 0x%02x | "BYTE_TO_BINARY_PATTERN, i, rVal, BYTE_TO_BINARY(rVal));      
     }
   }
@@ -577,7 +568,7 @@ void gtmlabLoop()
       LOGD("rxLen=%d, RSSI=-%d (t=%d, loop=%d)", radioLen, (pktRSSI>>1), (millis()-pktStart), pktLoops);
       pktLoops = 0;  // 20210303 PKTLOOPS
 
-      ESP_LOG_BUFFER_HEXDUMP(TAG, radioBuf, radioLen, ESP_LOG_VERBOSE);
+      HEXV(TAG, radioBuf, radioLen);
       if ((radioLen >= RX_MIN_LEN) && (radioLen <= RX_MAX_LEN)) {
         RS::ReedSolomon rs;
         rs.begin(radioLen-8, 1);
@@ -677,7 +668,7 @@ void gtmlabLoop()
 int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
 {
   // this is redundant
-  // ESP_LOG_BUFFER_HEXDUMP(TAG, rxBuf, rxLen, ESP_LOG_VERBOSE);
+  // HEXV(TAG, rxBuf, rxLen);
 
   uint16_t msgH16;
 
@@ -904,7 +895,9 @@ int txPacket(uint8_t *txBuf, uint8_t txLen, bool isCtrl)
 {
   uint8_t curr_IRQ2=0;
   unsigned long txStart;  // millis when data TX started
-  
+
+  HEXV(TAG, txBuf, txLen);
+
   LOGD("TX START");
   txStart = millis();
 
