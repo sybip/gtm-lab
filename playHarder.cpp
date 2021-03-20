@@ -19,7 +19,7 @@
 // Library "SparkFun u-blox GNSS" is required for GPS functions
 // (install it in Arduino IDE using "Tools > Manage Libraries")
 //
-#define USE_UBXGPS
+//#define USE_UBXGPS
 
 #ifdef USE_UBXGPS
 #include "SparkFun_u-blox_GNSS_Arduino_Library.h"
