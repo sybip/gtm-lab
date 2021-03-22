@@ -99,11 +99,13 @@ int freqdev = 12500;
 #define PRE_TIMEOUT 20  // data channel preable timeout
 #define CCH_SILENCE 40 // millis
 #define SCAN_DWELL 10  // millis
+// FIFO threshold must be ONE LESS than the smallest TX packet
+//   otherwise TX will not start, causing issue #2
+#define FIFOTHRE 14  // smallest packet is 1-byte DATA (air size=15)
 #define FIFOSIZE 64  // actually 66, but leave a margin
-#define FIFOTHRE 15  // fifo notification threshold
 uint8_t txSyncDelay = 10;  // millis to wait between sync packet and first data packet
 uint8_t txPackDelay = 8;   // millis to wait between data packets
-uint8_t TXFRAGSIZE = 90;   // it's what they use
+uint8_t TXFRAGSIZE = 90;   // it's what they use; up to 96 accepted, 98 with errors
 // min and max acceptable RX packet sizes (including RS ECC)
 #define RX_MIN_LEN 10   // min
 #define RX_MAX_LEN 200  // max
