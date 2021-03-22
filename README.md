@@ -4,8 +4,9 @@ An unofficial goTenna Mesh protocol playground
 ## Introduction
 Hello and welcome to the GTM Lab. This is a fun project to study and 
 re-implement the goTenna Mesh protocols on inexpensive hardware based on the 
-ESP32 MCU and RFM95W radio modules, using only unrestricted, publicly available 
-information. All project code is open source under the [MIT license](/LICENSE).
+ESP32 MCU and Semtech SX1276 long range radio modules (like HopeRF RFM95W), 
+using only unrestricted, publicly available information. All project code is 
+open source under the [MIT license](/LICENSE).
 
 The inspiration for the project was a message posted by user **dillon** 
 on the goTenna community forum:
@@ -70,7 +71,7 @@ mode.
 ## Installation
 
 ### Hardware requirements
-You will need a supported ESP32/RFM board (see "Easy" under "Supported hardware" above)
+You will need a supported ESP32+SX1276 board (see "Easy" under "Supported hardware" above)
 
 If purchasing new hardware for this project, we recommend the T-Beam;
 its 18650 Li-Ion battery holder with on-board management and built-in 
@@ -118,7 +119,7 @@ I (6475353) GTMLAB: RX CCh=01 SYNC(1): chIDX=1, frags=2, iniTTL=3, curTTL=2
 I (6475404) GTMLAB: RX DCh=42 DATA(2): len=90, fragIDX=0
 I (6475436) GTMLAB: RX DCh=41 DATA(2): len=45, fragIDX=1
 I (6475436) GTMLAB: complete: len=135, hash=0xcafe, time=88ms
-RX_MSG:0302|003fff55555555555500ff0000fb100100......
+RX_MSG:030212|003fff55555555555500ff0000fb100100......
 ```
 
 Type a short text in the serial console and press Enter. The text will be 
@@ -136,14 +137,18 @@ Change the `VERBOSITY` line to `ESP_LOG_DEBUG` or even `ESP_LOG_VERBOSE`
 to view details of received packets, correction protocols, channel hopping etc.
 
 ### Message formats exploration
-The output lines prefixed with `RX_ACK` and `RX_MSG` contain full hex dumps of 
-received radio traffic (see the source code for details on what some of those 
-bytes mean). All message classes are received, including encrypted messages.
+The output lines prefixed with `RX_ACK` and `RX_MSG` contain full hex dumps of
+received radio traffic (see the source code for details on what some of those
+bytes mean). All message classes are received, including P2P encrypted messages.
 
 These objects can be further processed on the computer using a Python or PERL 
 script to study the format of the packets and extract useful information.
 
-Example: [metalogger](https://gist.github.com/sybip/4b754010cf5a667c161f3ae3d8d106ef)
+Example: [metalogger](https://gist.github.com/sybip/4b754010cf5a667c161f3ae3d8d106ef).
+
+The pyGT module [`gtairobj.py`](https://github.com/sybip/pyGT/blob/master/gtairobj.py)
+contains function for parsing and creating GTM radio protocol objects compatible with
+the gtm-lab test console.
 
 ### Test console
 Implemented in the `playHarder.cpp` file and documented in 
