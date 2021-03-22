@@ -474,6 +474,28 @@ int conExec(char *conBuf, uint16_t conLen)
       }
       printf("\n");
 
+    } else if (conBuf[2] == 'c') {
+      // uint32_t cntRxPktAll = cntRxPktSYNC + cntRxPktDATA + cntRxPktACK + cntRxPktTIME;
+      // uint32_t cntRxErrAll = cntErrPRESTALL + cntErrPKTSTALL + cntErrLOSTSYNC + cntErrREEDSOLO + cntErrCRC16BAD;
+
+      // DUMP ALL COUNTERS
+      printf("SYS.UPTIME: %.3fs\n", millis()/1000.);
+      printf("RX PACKETS:\n- SYNC: %d\n- DATA: %d\n-  ACK: %d\n- TIME: %d\n", 
+             cntRxPktSYNC, cntRxPktDATA, cntRxPktACK, cntRxPktTIME);
+      printf("TX PACKETS:\n- SYNC: %d\n- DATA: %d\n-  ACK: %d\n- TIME: %d\n", 
+             cntTxPktSYNC, cntTxPktDATA, cntTxPktACK, cntTxPktTIME);
+      printf("RX OBJECTS:\n- DATA: %d (%d unique)\n-  ACK: %d (%d unique)\n", 
+             cntRxDataObjTot, cntRxDataObjUni, cntRxPktACK, cntRxPktACKUni);
+      printf("TX OBJECTS:\n- DATA: %d (%d own, %d relay)\n-  ACK: %d (%d own, %d relay)\n", 
+             cntTxDataObjTot, (cntTxDataObjTot - cntTxDataObjRel), cntTxDataObjRel, 
+             cntTxPktACK, (cntTxPktACK - cntTxPktACKRel), cntTxPktACKRel);
+      printf("ERRORS:\n");
+      printf("- PRESTALL: %d\n", cntErrPRESTALL);
+      printf("- PKTSTALL: %d\n", cntErrPKTSTALL);
+      printf("- LOSTSYNC: %d\n", cntErrLOSTSYNC);
+      printf("- REEDSOLO: %d\n", cntErrREEDSOLO);
+      printf("- CRC16BAD: %d\n", cntErrCRC16BAD);
+
     } else if (conBuf[2] == 's') {
       // READ STATE VARIABLES
       printf("PLAY_VER: %d\n", PLAY_VER);

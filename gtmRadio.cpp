@@ -198,6 +198,41 @@ uint8_t ackQHead = 0, ackQTail = 0;
 int pktLoops = 0;    // 20210303 PKTLOOPS
 
 
+// PACKET COUNTERS
+
+// ACK packets received
+// uint32_t cntRxPktACKTot = 0;  // total
+uint32_t cntRxPktACKUni = 0;  // unique
+// ACK packets transmitted
+//uint32_t cntTxPktACKTot = 0;  // total
+uint32_t cntTxPktACKRel = 0;  // relayed
+// DATA objects received
+uint32_t cntRxDataObjTot = 0;  // total
+uint32_t cntRxDataObjUni = 0;  // unique
+// DATA objects transmitted
+uint32_t cntTxDataObjTot = 0;  // total
+uint32_t cntTxDataObjRel = 0;  // relayed
+
+// Raw packets received
+uint32_t cntRxPktSYNC = 0;  // total SYNC
+uint32_t cntRxPktDATA = 0;  // total DATA
+uint32_t cntRxPktTIME = 0;  // total TIME
+uint32_t cntRxPktACK = 0;   // total ACK
+
+// Raw packets transmitted
+uint32_t cntTxPktSYNC = 0;  // total SYNC
+uint32_t cntTxPktDATA = 0;  // total DATA
+uint32_t cntTxPktTIME = 0;  // total TIME
+uint32_t cntTxPktACK = 0;   // total ACK
+
+// ERROR COUNTERS
+uint32_t cntErrPKTSTALL = 0;
+uint32_t cntErrPRESTALL = 0;
+uint32_t cntErrLOSTSYNC = 0;
+uint32_t cntErrREEDSOLO = 0;
+uint32_t cntErrCRC16BAD = 0;
+
+
 // user-definable event handler callbacks
 // MSG rx handler
 bool (* onRxMSG)(uint8_t *, uint16_t, uint8_t, uint8_t, uint8_t) = builtinRxMSG;
@@ -522,6 +557,7 @@ void gtmlabLoop()
               currChan, 
               radioLen-1, radioBuf[0], 
               pktRSSI>>1, (millis()-pktStart));
+        cntErrLOSTSYNC++;
 
         // From practical observations, LOSTSYNC on a control chan
         //   usually indicates a bad "packet size" byte, which is 
@@ -580,6 +616,7 @@ void gtmlabLoop()
           rxPacket(radioDec, radioLen-8, pktRSSI>>1);
         } else {
           LOGD("REEDSOLO FAIL");  // bail out
+          cntErrREEDSOLO++;
           resetState();
           return;
         }
@@ -604,6 +641,7 @@ void gtmlabLoop()
           holdchan ? '*' : (recvData ? 'D':'C'), 
           currChan,
           pktRSSI>>1, millis()-chanTimer);
+    cntErrPRESTALL++;
     resetState();   // BAILOUT
     return;
   }
@@ -623,6 +661,7 @@ void gtmlabLoop()
           currChan, 
           radioLen-1, radioBuf[0], 
           pktRSSI>>1, millis()-pktStart);
+    cntErrPKTSTALL++;
     resetState();
     return;
   }
@@ -685,6 +724,7 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
     LOGD("CRC16-OK");
   } else {
     LOGI("CRC16BAD want:%04x, got:%04x", crc_want, crc_calc);
+    cntErrCRC16BAD++;
     return 0;
   }
 
@@ -703,7 +743,8 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
   if (rxBuf[1] == PKT_TYPE_SYNC) {
     // SYNC packet, indicates the begining of a data packet
     LOGI("%s SYNC(1): chIDX=%d, frags=%d, iniTTL=%d, curTTL=%d", 
-      chanDesc, rxBuf[2], rxBuf[3], rxBuf[4], rxBuf[5]);
+         chanDesc, rxBuf[2], rxBuf[3], rxBuf[4], rxBuf[5]);
+    cntRxPktSYNC++;
 
       // hop to receive data (unless channel hold is engaged)
       if (!holdchan) {
@@ -724,6 +765,7 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
     // TIME packet, log for now but don't act
     uint32_t tStamp = (rxBuf[2]<<24)+(rxBuf[3]<<16)+(rxBuf[4]<<8)+rxBuf[5];
     LOGI("%s TIME(0): time=0x%08x", chanDesc, tStamp);
+    cntRxPktTIME++;
 
   } else if (rxBuf[1] == PKT_TYPE_ACK) {
     // ACK packet, indicates the successful delivery of a P2P message
@@ -731,10 +773,12 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
     LOGI("%s ACK (3): hash=0x%04x, hops=%d, iniTTL=%d, curTTL=%d",
       chanDesc, msgH16, 
       (rxBuf[4]>>4), (rxBuf[4] & 0x0f), rxBuf[5]);
+    cntRxPktACK++;
 
     if (inRingBuf(msgH16, rxAckBuf)) {
       LOGI("ACK SEEN BEFORE");
     } else {
+      cntRxPktACKUni++;
       rxAckBuf[rxAckPos++] = msgH16;
       rxAckPos %= HASH_BUF_LEN;
 
@@ -755,6 +799,7 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
           // decrement curTTL and enqueue for TX
           // FIXME catch error
           txEnQueueACK(msgH16, (rxBuf[4]>>4), (rxBuf[4] & 0x0f), (rxBuf[5]-1));
+          cntTxPktACKRel++;
         }
       }
 
@@ -770,6 +815,8 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
   } else if (rxBuf[1] == PKT_TYPE_DATA) {
     // DATA packet, a fragment of a protocol message of random length
     LOGI("%s DATA(2): len=%d, fragIDX=%d", chanDesc, rxBuf[2], rxBuf[3]);
+    cntRxPktDATA++;
+
     memcpy((packetBuf+packetLen), (rxBuf+4), rxBuf[2]);
     packetLen += rxBuf[2];
     wantFrags--;
@@ -789,10 +836,12 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
       LOGI("RX complete: len=%d, hash=0x%04x, time=%dms, RSSI=-%d", 
            packetLen, msgH16, (millis()-dataStart), 
            int(sumDChRSSI/(double)dataFrags));
+      cntRxDataObjTot++;
 
       if (inRingBuf(msgH16, rxMsgBuf)) {
         LOGI("MSG SEEN BEFORE");
       } else {
+        cntRxDataObjUni++;
         rxMsgBuf[rxMsgPos++] = msgH16;
         rxMsgPos %= HASH_BUF_LEN;
 
@@ -816,6 +865,7 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
               // decrement curTTL and enqueue for TX
               // FIXME catch error
               txEnQueueMSG(packetBuf, packetLen, lastIniTTL, (lastCurTTL-1));
+              cntTxDataObjRel++;
             }
           }
         }
@@ -1012,6 +1062,7 @@ int txSendSync(uint8_t chIDX, uint8_t frags, uint8_t iniTTL, uint8_t curTTL)
   LOGI("TX CCh=%02d SYNC(1): chIDX=%d, frags=%d, iniTTL=%d, curTTL=%d", 
         currChan, chIDX, frags, iniTTL, curTTL);
   txEncodeAndSend(mBuf, 4, PKT_TYPE_SYNC);
+  cntTxPktSYNC++;
 }
 
 
@@ -1032,6 +1083,7 @@ int txSendAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
   LOGI("TX CCh=%02d ACK (3): hash=0x%04x, hops=%d, iniTTL=%d, curTTL=%d", 
         currChan, hashID, hops, iniTTL, curTTL);
   txEncodeAndSend(mBuf, 4, PKT_TYPE_ACK);
+  cntTxPktACK++;
 }
 
 
@@ -1050,6 +1102,7 @@ int txSendTime(uint64_t time32)
 
   LOGI("TX CCh=%02d TIME(0): 0x%08x", currChan, time32);
   txEncodeAndSend(mBuf, 4, PKT_TYPE_TIME);
+  cntTxPktTIME++;
 }
 
 
@@ -1111,6 +1164,7 @@ int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
 
     // send the fragment
     txEncodeAndSend(oBuf, oLen, PKT_TYPE_DATA);
+    cntTxPktDATA++;
 
     // output after data upload, to avoid any uncontrolled delays
     LOGI("TX DCh=%02d DATA(2): len=%d, fragIDX=%d", currChan, oLen-2, i);
@@ -1118,6 +1172,7 @@ int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
     while (!LoRa.readRegister(REG_IRQ_FLAGS_2) & 0x40);  // wait for FifoEmpty
     delay(txPackDelay);  // wait for others
   }
+  cntTxDataObjTot++;
 }
 
 

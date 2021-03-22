@@ -23,7 +23,7 @@
 #define HEXD(tag, buf, len) ESP_LOG_BUFFER_HEXDUMP(tag, buf, len, ESP_LOG_DEBUG)
 #define HEXV(tag, buf, len) ESP_LOG_BUFFER_HEXDUMP(tag, buf, len, ESP_LOG_VERBOSE)
 
-#else
+#else  // ARDUINO_ARCH_ESP32
 // we need these to be consistent
 typedef enum {
     ESP_LOG_NONE = 0,
@@ -45,7 +45,7 @@ typedef enum {
 // not needed
 #define esp_log_level_set
 
-#endif  // ESP_LOGGING
+#endif  // ARDUINO_ARCH_ESP32
 
 
 // Logging macros, common to ESP and non-ESP
@@ -106,6 +106,36 @@ extern regSet * curRegSet;
 extern uint8_t txSyncDelay;   // millis to wait between sync packet and first data packet
 extern uint8_t txPackDelay;   // millis to wait between data packets
 extern esp_log_level_t logLevel;
+
+// COUNTERS
+// ACK packets received
+extern uint32_t cntRxPktACKUni;  // unique
+// ACK packets transmitted
+extern uint32_t cntTxPktACKRel;  // relayed
+// DATA objects received
+extern uint32_t cntRxDataObjTot;  // total
+extern uint32_t cntRxDataObjUni;  // unique
+// DATA objects transmitted
+extern uint32_t cntTxDataObjTot;  // tot
+extern uint32_t cntTxDataObjRel;  // relayed
+
+// Raw packets received
+extern uint32_t cntRxPktSYNC;  // total SYNC
+extern uint32_t cntRxPktDATA;  // total DATA
+extern uint32_t cntRxPktTIME;  // total TIME
+extern uint32_t cntRxPktACK;   // total ACK
+// Raw packets transmitted
+extern uint32_t cntTxPktSYNC;  // total SYNC
+extern uint32_t cntTxPktDATA;  // total DATA
+extern uint32_t cntTxPktTIME;  // total TIME
+extern uint32_t cntTxPktACK;   // total ACK
+
+// ERROR COUNTERS
+extern uint32_t cntErrPKTSTALL;
+extern uint32_t cntErrPRESTALL;
+extern uint32_t cntErrLOSTSYNC;
+extern uint32_t cntErrREEDSOLO;
+extern uint32_t cntErrCRC16BAD;
 
 // event handler functions
 extern bool (* onRxMSG)(uint8_t *, uint16_t, uint8_t, uint8_t, uint8_t);
