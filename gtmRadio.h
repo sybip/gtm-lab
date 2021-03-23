@@ -106,6 +106,7 @@ extern regSet * curRegSet;
 extern uint8_t txSyncDelay;   // millis to wait between sync packet and first data packet
 extern uint8_t txPackDelay;   // millis to wait between data packets
 extern esp_log_level_t logLevel;
+extern unsigned long chanTimer;
 
 // COUNTERS
 // ACK packets received

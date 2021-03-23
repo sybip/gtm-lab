@@ -596,12 +596,10 @@ void gtmlabLoop()
     }    
 
     // check PAYLOAD_READY IRQ2 bit (read and saved above)
-    //if (payReady || (curr_IRQ2 & 0x04)) {
     if (payReady) {
       // Read RSSI ASAP
       pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
 
-      // LOGD("rxLen=%d, RSSI=-%d (t=%d)", radioLen, (pktRSSI>>1), (millis()-pktStart));
       // 20210303 PKTLOOPS
       LOGD("rxLen=%d, RSSI=-%d (t=%d, loop=%d)", radioLen, (pktRSSI>>1), (millis()-pktStart), pktLoops);
       pktLoops = 0;  // 20210303 PKTLOOPS
@@ -614,27 +612,34 @@ void gtmlabLoop()
           LOGD("REEDSOLO");
           // Packet OK, send it for further processing
           rxPacket(radioDec, radioLen-8, pktRSSI>>1);
+
+          // not really needed, but helps with debugging
+          memset(radioBuf, 0, sizeof(radioBuf));
+
         } else {
-          LOGD("REEDSOLO FAIL");  // bail out
+          LOGI("REEDSOLO FAIL %cCh=%02d, len=%d, RSSI=-%d", 
+                holdchan ? '*' : (recvData ? 'D':'C'), 
+                currChan, radioLen, pktRSSI>>1);
           cntErrREEDSOLO++;
           resetState();
-          return;
         }
       } else {
         LOGD("Invalid rxLen");
         resetState();
-        return;
       }
 
+      // Finished processing a radio packet, clean up a bit
       pktStart = 0;  // no packet being received right now
       radioLen = 0;
-    }
+      return;
+    }  // if payReady
   }
 
   // in recvData mode, we just jumped on a data chan and are 
   //   currently waiting for a preamble?
   // if we missed the preamble, make sure we don't wait forever
-  if (recvData && (! (curr_IRQ1 & 0x02)) && 
+  //if (recvData && (! (curr_IRQ1 & 0x02)) && 
+  if (recvData && (! pktStart) && 
       (millis() - chanTimer > PRE_TIMEOUT)) {
     pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
     LOGI("PRESTALL %cCh=%02d, RSSI=-%d (t=%d)",

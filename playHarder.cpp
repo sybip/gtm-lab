@@ -40,7 +40,7 @@ SFE_UBLOX_GNSS myGPS;
 
 #endif  // USE_UBXGPS
 
-#define PLAY_VER 2021031901   // Playground version
+#define PLAY_VER 2021032301   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -506,6 +506,7 @@ int conExec(char *conBuf, uint16_t conLen)
       printf("RECVDATA: %s\n", recvData ? "ON":"OFF");
       printf("INTXMODE: %s\n", inTXmode ? "ON":"OFF");
       printf("CURRCHAN: %d\n", currChan);
+      printf("CHANTIME: %d ms\n", millis() - chanTimer);
       printf("RELAYING: %s\n", relaying ? "ON":"OFF");
       printf("BASEFREQ: %d\n", curRegSet->baseFreq);
       printf("CHANSTEP: %d\n", curRegSet->chanStep);
@@ -521,6 +522,7 @@ int conExec(char *conBuf, uint16_t conLen)
 #endif  // HAS_UBXGPS
 
 #ifdef HAS_UBXGPS
+
     } else if (conBuf[2] == 'g') {
       if (gpsAct) {
         gpsFix = myGPS.getFixType();
@@ -554,6 +556,7 @@ int conExec(char *conBuf, uint16_t conLen)
         printf("0x%02x | 0x%02x | "BYTE_TO_BINARY_PATTERN"\n", wReg, wVal, BYTE_TO_BINARY(wVal));
       }
     }
+    printf("---\n");
 
   } else if (conBuf[1] == 'w') {
     // WRITE register wXXYY
