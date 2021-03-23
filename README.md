@@ -8,10 +8,6 @@ ESP32 MCU and Semtech SX1276 long range radio modules (like HopeRF RFM95W),
 using only unrestricted, publicly available information. All project code is 
 open source under the [MIT license](/LICENSE).
 
-The inspiration for the project was a message posted by user **dillon** 
-on the goTenna community forum:
-> put a goTenna assembly line in every home and let’s see them fight this door-to-door
-
 While the long-term goal of the project is a fully GTM interoperable open-source 
 protocol stack running on open-source hardware, the short term goal is really just 
 to have fun and share the lessons learned.
@@ -133,8 +129,13 @@ To enable sending to goTenna app, enter command `!sa3fff` in the gtm-lab
 console (set AppID to 0x3fff), and messages will become visible.
 
 ### Radio protocol exploration
-Change the `VERBOSITY` line to `ESP_LOG_DEBUG` or even `ESP_LOG_VERBOSE` 
-to view details of received packets, correction protocols, channel hopping etc.
+Change the logging verbosity to "Debug" (console command `!ld`) or even 
+"Verbose" (`!lv`) to view details of received packets, correction protocols, 
+channel hopping etc.
+Be warned that Verbose mode will break protocol timings due to serial port 
+congestion. On boards that support high-speed serial, like the T-Beam, this 
+may be mitigated by increasing the serial port speed to 1Mbps via console 
+command `!ssh`.
 
 ### Message formats exploration
 The output lines prefixed with `RX_ACK` and `RX_MSG` contain full hex dumps of
@@ -164,6 +165,7 @@ No Github account? - no problem! Just shoot a bitmessage to the author at
 BM-2cW2P5qmucxH4jWP2JEyqKA12VhTJibUXL
 
 ## Credits
+
 ### Software libraries
 - [Arduino Time library](https://github.com/PaulStoffregen/Time) Copyright Michael Margolis, LGPLv2.1 license
 - [Arduino LoRa library](https://github.com/sandeepmistry/arduino-LoRa) Copyright Sandeep Mistry, MIT license 
