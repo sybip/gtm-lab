@@ -282,10 +282,12 @@ uint16_t gtAlgoH16(uint8_t* str, size_t len)
 uint16_t msgHash16(uint8_t* mBuf)
 {
   // position of HEAD element (depends on message class)
-  uint8_t headPos = 15;
+  uint8_t headPos = 5;
 
-  if ((mBuf[0] == MSG_CLASS_SHOUT) || (mBuf[0] == MSG_CLASS_EMERG)) {
-    headPos = 5;
+  if (mBuf[0] == MSG_CLASS_GROUP) {
+    headPos = 12;   // destination address
+  } else if (mBuf[0] == MSG_CLASS_P2P) {
+    headPos = 15;   // destination + element 04
   }
 
   // FIXME - do a sanity check on TLV header? (FB 10)
