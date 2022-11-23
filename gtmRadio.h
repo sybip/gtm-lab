@@ -107,6 +107,8 @@ extern uint8_t txSyncDelay;   // millis to wait between sync packet and first da
 extern uint8_t txPackDelay;   // millis to wait between data packets
 extern esp_log_level_t logLevel;
 extern unsigned long chanTimer;
+extern uint16_t txInertia;    // INERTIA - millis to wait before TX
+extern uint16_t txInerMAX;    // INERTIA - maximum value
 
 // COUNTERS
 // ACK packets received
@@ -137,6 +139,12 @@ extern uint32_t cntErrPRESTALL;
 extern uint32_t cntErrLOSTSYNC;
 extern uint32_t cntErrREEDSOLO;
 extern uint32_t cntErrCRC16BAD;
+
+// LBT COUNTERS
+extern uint32_t cntCChBusy;
+extern uint32_t cntCChFree;
+extern uint32_t cntDChBusy;
+extern uint32_t cntDChFree;
 
 // event handler functions
 extern bool (* onRxMSG)(uint8_t *, uint16_t, uint8_t, uint8_t, uint8_t);
@@ -177,7 +185,7 @@ void setCtrlChan();
 // Reset receiver soft buffers and state variables
 // Call this after a successful object reception or transmission, 
 //   or to bail out of a receive operation that failed partway
-void resetState();
+void resetState(bool dirty = false);
 
 // Call from Arduino setup() to initialize radio and data structures
 void gtmlabInit();
@@ -188,6 +196,8 @@ void gtmlabLoop();
 // called from radio receiver for each good packet received
 int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI);
 
+// called from main loop to check for TX tasks and execute the first in queue
+bool txTask();
 
 // Prepares the radio and state buffers for transmitting one or more packets
 // There are a few things that need to be done before hitting TX on that radio

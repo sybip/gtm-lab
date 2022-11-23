@@ -33,6 +33,7 @@ Arguments in **bold** are mandatory. Items labelled [GPS] are only available if 
 | !df | -             |         | dump entire FIFO content<br/>(use !dr00 to read one FIFO byte)
 | !ds | -             |         | dump state variables (incomplete)
 | !dc | -             |         | dump packet and error counters (incomplete)
+| !zc | -             |         | reset (Zero) packet and error counters
 | !dr | **XX**        | !dr3e   | dump radio register XX (in HEX)
 | !dg | -             |         | **[GPS]** dump current GPS state
 | !w  | **XXYY**      | !w3520  | write to radio register XX value YY (XX and YY in HEX)

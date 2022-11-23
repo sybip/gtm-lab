@@ -20,20 +20,18 @@ Executive summary: **can send and receive messages** to/from the goTenna
 mesh network.
 
 ### RX capability:
-- preamble and syncword detection
-- control channel scanning
-- error correction
+- full GTM waveform reception including error correction
 - control packet (SYNC/ACK) reception
-- data packet reception and reassembly
+- data packet reception and large payload reassembly
 
 ### TX capability:
 - assemble radio packets with header and error correction codes
 - generate ACK, SYNC, DATA, TIME packets with correct formats
 - packetize and send large payloads - up to 255 bytes
-- control channel listen-before-talk
+- listen-before-talk on all channels
 
 ### Relay/mesh capability:
-- tentative implementation, more work required
+- operational at net-positive performance (improves message propagation)
 
 ## Interop testing
 The software is tested for interoperation with:
@@ -49,6 +47,7 @@ two widely available, **open-source hardware** boards, selectable via the
 `BOARD_TYPE` definition in the configuration file:
   - [LILYGO T-Beam 1.0](https://github.com/Xinyuan-LilyGO/LilyGO-T-Beam) and newer
   - [Sparkfun WRL-15006](https://github.com/sparkfun/ESP32_LoRa_1Ch_Gateway)
+  - [Sparkfun MicroMod](https://github.com/sparkfun/SparkFun_MicroMod_Main_Board_Single) with [ESP32 CPU](https://github.com/sparkfun/MicroMod_ESP32_Processor) and [1W LoRa module](https://github.com/sparkfun/MicroMod_Function_LoRa_1W)
 
 - **Medium:** any ESP32 board with an SPI-connected RFM95W or compatible 
 SX1276-based radio should work, as long as the correct pin connections are 

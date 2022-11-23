@@ -40,7 +40,7 @@ SFE_UBLOX_GNSS myGPS;
 
 #endif  // USE_UBXGPS
 
-#define PLAY_VER 2021032301   // Playground version
+#define PLAY_VER 2022112201   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -362,9 +362,20 @@ int conExec(char *conBuf, uint16_t conLen)
 
   } else if (conBuf[1] == 's') {
     if (conBuf[2] == 'd') {
-      memcpy(hexBuf, conBuf+3, 2);
-      txPackDelay = strtoul(hexBuf, NULL, 10) & 0xff;
-      LOGI("PACKDELAY now %dms", txPackDelay);
+      switch(conBuf[3]) {
+        case 's':
+          memcpy(hexBuf, conBuf+4, 2);
+          txSyncDelay = strtoul(hexBuf, NULL, 10) & 0xff;
+          LOGI("SYNCDELAY now %dms", txSyncDelay);
+          break;
+        case 'd':
+          memcpy(hexBuf, conBuf+4, 2);
+          txPackDelay = strtoul(hexBuf, NULL, 10) & 0xff;
+          LOGI("PACKDELAY now %dms", txPackDelay);
+          break;
+        default:
+          LOGW("NOT FOUND");
+      }
     } else if (conBuf[2] == 'g') {
       switch(conBuf[3]) {
         case '1':
@@ -496,6 +507,12 @@ int conExec(char *conBuf, uint16_t conLen)
       printf("- REEDSOLO: %d\n", cntErrREEDSOLO);
       printf("- CRC16BAD: %d\n", cntErrCRC16BAD);
 
+      printf("LBT COUNTERS:\n");
+      printf("- CTRLFREE: %d\n", cntCChFree);
+      printf("- CTRLBUSY: %d\n", cntCChBusy);
+      printf("- DATAFREE: %d\n", cntDChFree);
+      printf("- DATABUSY: %d\n", cntDChBusy);
+
     } else if (conBuf[2] == 's') {
       // READ STATE VARIABLES
       printf("PLAY_VER: %d\n", PLAY_VER);
@@ -507,6 +524,8 @@ int conExec(char *conBuf, uint16_t conLen)
       printf("INTXMODE: %s\n", inTXmode ? "ON":"OFF");
       printf("CURRCHAN: %d\n", currChan);
       printf("CHANTIME: %d ms\n", millis() - chanTimer);
+      printf("INERTIA : %d (max=%d)\n", txInertia, txInerMAX);
+      printf("PKTDELAY: SYNC=%d DATA=%d\n", txSyncDelay, txPackDelay);
       printf("RELAYING: %s\n", relaying ? "ON":"OFF");
       printf("BASEFREQ: %d\n", curRegSet->baseFreq);
       printf("CHANSTEP: %d\n", curRegSet->chanStep);
@@ -534,8 +553,8 @@ int conExec(char *conBuf, uint16_t conLen)
           myGPS.getTimeValid() ? "VAL" : "INV");
 
         printf("GPS_LAT : %d\nGPS_LON : %d\nGPS_HAE : %d\n",
-          myGPS.getLatitude(),  // *10E7
-          myGPS.getLongitude(), // *10E7
+          myGPS.getLatitude(),  // *1E7
+          myGPS.getLongitude(), // *1E7
           myGPS.getAltitude());  // mm
 
         printf("GPS_DOP : %d\nGPS_SIV : %d\nGPS_FIX : %d\n", 
@@ -628,6 +647,20 @@ int conExec(char *conBuf, uint16_t conLen)
     } else if (conBuf[2] == 'k') {
       // TEST/ATAK - send a random ATAK PLI message
       testTakPLI();
+    }
+
+  } else if (conBuf[1] == 'z') {
+    // Reset (Zero) some internal variables
+    if (conBuf[2] == 'c') {  // counters (from !dc)
+      cntRxPktSYNC = cntRxPktDATA = cntRxPktACK = cntRxPktTIME = 0;
+      cntTxPktSYNC = cntTxPktDATA = cntTxPktACK = cntTxPktTIME = 0;
+      cntRxDataObjTot = cntRxDataObjUni = cntRxPktACK = cntRxPktACKUni = 0;
+      cntTxDataObjTot = cntTxDataObjRel = cntTxPktACK = cntTxPktACKRel = 0;
+      cntErrPRESTALL = cntErrPKTSTALL = cntErrLOSTSYNC = cntErrREEDSOLO = cntErrCRC16BAD = 0;
+      cntCChFree = cntCChBusy = cntDChFree = cntDChBusy = 0;
+      LOGI("ALL COUNTERS RESET");
+    } else {
+      LOGW("UNKNOWN COMMAND");
     }
 
   } else {

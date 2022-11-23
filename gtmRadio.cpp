@@ -28,6 +28,12 @@
 #define pinRST 27  // LoRa radio reset
 #define pinIRQ 26  // Hardware interrupt pin
 
+#elif BOARD_TYPE==3
+// Sparkfun Micromod, LoRa 1W board at function zero
+#define pinCS 5   // LoRa radio chip select
+#define pinRST 25  // LoRa radio reset
+#define pinIRQ 14  // Hardware interrupt pin
+
 #else
 #error "Invalid BOARD_TYPE"
 #endif
@@ -95,10 +101,11 @@ int freqdev = 12500;
 
 // Some constants related to radio timings etc,
 // Determined mostly through trial-and-error
-#define PKT_TIMEOUT 40 // millis
-#define PRE_TIMEOUT 20  // data channel preable timeout
-#define CCH_SILENCE 40 // millis
+#define PKT_TIMEOUT 42 // millis
+#define PRE_TIMEOUT 20  // data channel preamble timeout
+#define LBT_SILENCE 10 // millis to listen for silence before tx
 #define SCAN_DWELL 10  // millis
+#define SILENCE_DBI 80  // (presumed negative)
 // FIFO threshold must be ONE LESS than the smallest TX packet
 //   otherwise TX will not start, causing issue #2
 #define FIFOTHRE 14  // smallest packet is 1-byte DATA (air size=15)
@@ -151,17 +158,25 @@ unsigned long lastCChAct[4] = { 0, 0, 0, 0 };
 
 bool relaying = DFLT_RELAY;  // enable mesh relay function
 
-// Timing related variables
 esp_log_level_t logLevel = VERBOSITY;  // in case we want to query it
-unsigned long pktStart = 0;   // millis when packet RX started
+
+// Timing related variables
+unsigned long pktStart = 0;   // millis when packet RX started (preamble detected)
 unsigned long dataStart = 0;  // millis when data RX started
 unsigned long lastHop = 0;    // millis when we last hopped ctrl chan
 unsigned long chanTimer = 0;  // millis when we entered current channel
+
+uint16_t txInertia = 0;   // INERTIA - millis to wait before TX
+uint16_t txInerMAX = 600; // INERTIA - maximum value
+unsigned long txBackOff = 0; // Tx retry backoff
+uint16_t txBackMAX = 200;   // Tx max backoff
 
 // RSSI, keep it simple
 uint8_t pktRSSI = 0;  // absolute value; RSSI = -RssiValue/2[dBm]
 uint8_t cChRSSI = 0;  // control chan RSSI (for LBT)
 uint16_t sumDChRSSI = 0;  // sum of data channel RSSI, for averaging
+uint8_t regRSSI_TS = 2;   // RSSI register time to settle [ms]
+// actual formula: TS[ms] = 2 ^ (RSSI_SMOOTHING+1) / (4 * RX_BW)
 
 // Interrupt Status Registers - stored previous values
 uint8_t prev_IRQ1 = 0, prev_IRQ2 = 0;
@@ -176,6 +191,7 @@ struct msgDesc {
   uint8_t iniTTL;
   uint8_t curTTL;
   uint16_t hashID;
+  unsigned long tStamp;
   uint16_t msgLen;
   uint8_t msgObj[500];  // FIXME explain
 };
@@ -184,6 +200,7 @@ struct ackDesc {
   uint8_t iniTTL;
   uint8_t curTTL;
   uint16_t hashID;
+  unsigned long tStamp;
   uint8_t hops;
 };
 
@@ -197,6 +214,7 @@ uint8_t ackQHead = 0, ackQTail = 0;
 // (it's currently not optimal, we need to bring it way down)
 int pktLoops = 0;    // 20210303 PKTLOOPS
 
+void echoCount(uint16_t hashID, bool isACK);
 
 // PACKET COUNTERS
 
@@ -231,6 +249,12 @@ uint32_t cntErrPRESTALL = 0;
 uint32_t cntErrLOSTSYNC = 0;
 uint32_t cntErrREEDSOLO = 0;
 uint32_t cntErrCRC16BAD = 0;
+
+// LBT COUNTERS
+uint32_t cntCChBusy = 0;
+uint32_t cntCChFree = 0;
+uint32_t cntDChBusy = 0;
+uint32_t cntDChFree = 0;
 
 
 // user-definable event handler callbacks
@@ -327,6 +351,10 @@ bool inRingBuf(uint16_t needle, uint16_t *haystack)
 void setChan(uint8_t chan)
 {
   unsigned long tStart = millis();
+  uint8_t readyBits = 0xd0;   // MODEREADY | RXREADY | PLLLOCK
+
+  if (inTXmode)
+    readyBits = 0xb0;   // MODEREADY | TXREADY | PLLLOCK
 
   LoRa.setFrequency(curRegSet->baseFreq + (chan*curRegSet->chanStep));
 
@@ -334,7 +362,7 @@ void setChan(uint8_t chan)
   while(!locked) {
     uint8_t curr_IRQ1 = LoRa.readRegister(REG_IRQ_FLAGS_1);
     // MODEREADY | PLLLOCK = 0b10010000
-    if ((curr_IRQ1 & 0x90) == 0x90)
+    if ((curr_IRQ1 & readyBits) == readyBits)
       locked = true;
   }
 
@@ -348,6 +376,7 @@ void setChan(uint8_t chan)
   currChan = chan;
 }
 
+
 // Tune to a data channel, argument is INDEX in dataChans[] map!
 //   (do not use a channel number as argument)
 // To hop to a channel by number, use instead setChan() above
@@ -356,6 +385,16 @@ void setDataChanX(uint8_t dChanX)
   dChanX %= curRegSet->dChanNum;
   setChan(curRegSet->dChanMap[dChanX]);
 }
+
+
+// Tune to a control channel, argument is INDEX in ctrlChans[] map!
+void setCtrlChanX(uint8_t cChanX)
+{
+  currCChIdx = cChanX;  // redundant?
+  currCChIdx %= curRegSet->cChanNum;
+  setChan(curRegSet->cChanMap[currCChIdx]);
+}
+
 
 // Tune to a control channel (next in sequence and increment)
 // Call this repeatedly to traverse channel map in a scanning pattern
@@ -367,12 +406,76 @@ void setCtrlChan()
 }
 
 
+// Find a free channel to transmit
+// Tune to one or more random channels, listen for a few millis (LBT_SILENCE), and if
+//  RSSI is below silence floor (SILENCE_DBI), return true - "clear to transmit"
+// Will populate the global variables currDChIdx and currCChIdx with the indexes of
+//   the tested channels, both in case of success or failure (this will allow the main
+//   loop to pick up a potential incoming transmission without delay)
+// WARNING: BLOCKING function will block for up to n * LBT_SILENCE millis
+//
+// Relevant: RSSISmoothing setting (default number of samples = 8 maybe too small?)
+//
+bool findClearChan(uint8_t needData)
+{
+  uint8_t tmpRSSI = 0;
+
+  if (needData) {
+    // Data Channels wanted, find this first
+    // NOTE: Blocking section - can't do anything else while sniffing the data chan
+    currDChIdx = random(curRegSet->dChanNum - 1);
+
+    // We do not require the DATA chan straight away, because we haven't sent
+    // our control (SYNC) packet yet. So, upon choosing a datachan sequence, we
+    // check for a few things:
+    // - check the exact datachan (to see is anything coming our way?) FIXME OVERKILL?
+    // - check the next-in-seq datachan, where we will transmit (is anything there NOW?)
+    // - check rest of datachans in sequence - mostly in case of persistent blockages
+    for (int i = 0; i < (needData+1); i++) {
+      setDataChanX((currDChIdx + i) % curRegSet->dChanNum);
+      for (int j = 0; j < round(LBT_SILENCE/regRSSI_TS); j++) {
+        delay(regRSSI_TS);  // ms
+        tmpRSSI = LoRa.readRegister(REG_RSSI_VALUE);
+        if (tmpRSSI < (SILENCE_DBI<<1)) {
+          LOGI("LBT DCh %02d(%02d) RSSI=-%d", (currDChIdx + i) % curRegSet->dChanNum,
+              currChan, tmpRSSI>>1);
+          cntDChBusy++;
+          // Before returning, hop back to original control chan to avoid a deadlock
+          setCtrlChanX(currCChIdx);
+          return false;
+        }
+      }
+    }
+    cntDChFree++;
+  }
+
+  // Ctrl Channel always needed, find it now
+  // NOTE: this section is also blocking, although it doesn't technically NEED TO BE
+  // (we sniff control channels all the time), but we do it to avoid complexity
+  currCChIdx = random(curRegSet->cChanNum - 1);
+  setCtrlChanX(currCChIdx);
+  for (int j = 0; j < round(LBT_SILENCE/regRSSI_TS); j++) {
+    delay(regRSSI_TS);  // ms
+    tmpRSSI = LoRa.readRegister(REG_RSSI_VALUE);
+    if (tmpRSSI < (SILENCE_DBI<<1)) {
+      LOGI("LBT CCh %02d(%02d) RSSI=-%d", currCChIdx, currChan, tmpRSSI>>1);
+      cntCChBusy++;
+      return false;
+    }
+  }
+  cntCChFree++;
+  return true;
+}
+
+
 // Reset receiver soft buffers and state variables
 // Call this after a successful object reception or transmission, 
 //   or to bail out of a receive operation that failed partway
-void resetState()
+// Should usually complete in <~1ms
+void resetState(bool dirty)
 {
-  LOGD("----------------------------------------");
+  LOGD("---[ reset %s state ]-------------------", dirty ? "DIRTY" : "CLEAN");
+  unsigned long ts = millis();
   wantFrags = 0;
   radioLen = 0;
   packetLen = 0;
@@ -390,16 +493,36 @@ void resetState()
   recvData = false;   // we're not receiving data
   pktStart = 0;   // we're not receiving a packet
 
+  // reset TX inertia value
+  // currently we use pure randomness, however this could be
+  // refined to be a function of measured network congestion,
+  // a timeslot-type arrangement etc
+  txInertia = random(txInerMAX);
+  LOGV("INERTIA=%dms", txInertia);
+
   // initialize channel activity timers
   for (int i=0; i<4; i++)
     lastCChAct[i] = millis();
 
+  // reset IRQ1 PREAMBLE AND SYNCWORD bits (by writing 1 to them)
+  LoRa.writeRegister(REG_IRQ_FLAGS_1, 0x03);
+  prev_IRQ1 = LoRa.readRegister(REG_IRQ_FLAGS_1);
+
   // reset the radio's FIFO
-  while (!((LoRa.readRegister(REG_IRQ_FLAGS_2)) & 0x40))
+  while (!((prev_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2)) & 0x40))
     LoRa.readRegister(REG_FIFO);
 
   if (!holdchan)
     setCtrlChan();
+
+    LOGV("IRQp: "BYTE_TO_BINARY_PATTERN" "BYTE_TO_BINARY_PATTERN" %s:%s:%s",
+             BYTE_TO_BINARY(prev_IRQ1),
+             BYTE_TO_BINARY(prev_IRQ2),
+          (prev_IRQ1 & 0x02) ? "PR":"--",
+          (prev_IRQ1 & 0x01) ? "SW":"--",
+          (prev_IRQ2 & 0x04) ? "PL":"--");
+
+  LOGV("rst state: %dms", millis()-ts);
 }
 
 
@@ -419,7 +542,7 @@ void gtmlabInit()
   LoRa.setPins(pinCS, pinRST, pinIRQ);
 
   if (!LoRa.begin(curRegSet->baseFreq)) {   // init radio at base frequency
-    LOGE("Radio init failed. Check pin definitions");
+    LOGE("Radio init failed. Check board type and pin definitions");
     while (true);
   }
 
@@ -451,6 +574,9 @@ void gtmlabInit()
   LoRa.writeRegister(REG_PREAMBLE_DETECT, 0xca); // 3 bytes preamble
   //LoRa.writeRegister(REG_PREAMBLE_DETECT, 0xaa); // 2 bytes preamble
   //LoRa.writeRegister(REG_PREAMBLE_DETECT, 0x8a); // 1 bytes preamble
+
+  // Set RSSI smoothing (up to 32 samples from the default of 8)
+  LoRa.writeRegister(REG_RSSI_CONFIG, 0x04);
 
   // Set Sync configuration
   LoRa.writeRegister(REG_SYNC_CONFIG, 0x51);  // not 81
@@ -492,15 +618,13 @@ void gtmlabInit()
 void gtmlabLoop()
 {
   char rx_byte = 0;
-  uint8_t curr_IRQ1 = 0;
-  uint8_t curr_IRQ2 = 0;
   bool payReady = false;
 
-  pktLoops++;    // 20210303 PKTLOOPS
-
   // Read IRQ registers once
-  curr_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2);
-  curr_IRQ1 = LoRa.readRegister(REG_IRQ_FLAGS_1);
+  uint8_t curr_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2);
+  uint8_t curr_IRQ1 = LoRa.readRegister(REG_IRQ_FLAGS_1);
+
+  pktLoops++;    // 20210303 PKTLOOPS
 
   if ((curr_IRQ1 != prev_IRQ1) || (curr_IRQ2 != prev_IRQ2)) {
     // Something changed in the IRQ registers
@@ -510,12 +634,13 @@ void gtmlabLoop()
              BYTE_TO_BINARY(curr_IRQ2),
           (curr_IRQ1 & 0x02) ? "PR":"--",
           (curr_IRQ1 & 0x01) ? "SW":"--",
-          (curr_IRQ2 & 0x04) ? "PL":"--");          
+          (curr_IRQ2 & 0x04) ? "PL":"--");
 
     // First check preamble, then syncword, then payready
     // The order is IMPORTANT - that's why we need a FSM
 
     if (((prev_IRQ1 & 0x02)!=0x02) && ((curr_IRQ1 & 0x02)==0x02)) {
+      // PREAMBLE bit rising
       LOGD("PREAMBLE (t=0)");
       pktStart=millis();
       pktLoops = 0;    // 20210303 PKTLOOPS
@@ -527,6 +652,7 @@ void gtmlabLoop()
     }
 
     if (((prev_IRQ1 & 0x03)!=0x03) && ((curr_IRQ1 & 0x03)==0x03)) {
+      // SYNCWORD bit rising and PREAMBLE is up (or rising, see below)
       if (! pktStart) {
         // missed the preamble, but it's OK, start the timer now
         pktStart=millis();
@@ -539,18 +665,21 @@ void gtmlabLoop()
     }
 
     if (((prev_IRQ2 & 0x04)!=0x04) && ((curr_IRQ2 & 0x04)==0x04)) {
+      // PAYREADY bit rising
       if (pktStart) {
         LOGD("PAYREADY (t=%d)", (millis()-pktStart));
         payReady = true;
       } else {
         LOGD("PAYREADY IGNORED");  // likely a misfire
-        resetState();
+        resetState(true);
         // FIXME - bailout?
       }
     }
 
     if (((prev_IRQ1 & 0x03)==0x03) && ((curr_IRQ1 & 0x03)!=0x03)) {
+      // one of PREAMBLE/SYNCWORD bits falling ...
       if ((radioLen > 0) && !((curr_IRQ2 & 0x04)==0x04)) {
+        // ... while PAYREADY bit is NOT up yet
         // lost sync while receiving packet - NOT GOOD
         // Read RSSI (debug purposes only)
         pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
@@ -566,7 +695,7 @@ void gtmlabLoop()
         //   a hard one to recover from.
         // Abandon this packet and get ready for next one ASAP
         if ((!recvData) && radioBuf[0] > 16) {  // normal size=15
-          resetState();
+          resetState(true);
           return;  // BAILOUT
         }
       }
@@ -579,14 +708,15 @@ void gtmlabLoop()
 
   if(((curr_IRQ1 & 0x03)==0x03) && 
      ((curr_IRQ2 & 0x20) || !(curr_IRQ2 & 0x40))) {
+    // if PREAMBLE|SYNCWORD are set, and (FIFOLEVEL or not FIFOEMPTY)
 
-    if (curr_IRQ2 & 0x20) {
+    if (curr_IRQ2 & 0x20) {  // FIFOLEVEL
       // FIFO above threshold, read FIFOTHRE bytes blindly
       for (int i=0; i<FIFOTHRE; i++) {
         radioBuf[radioLen++] = LoRa.readRegister(REG_FIFO);
       }
-    } else {
-      // FIFO below threshold, read one-by-one until empty
+    } else {  // not FIFOEMPTY
+      // FIFO below threshold, read one-by-one until FIFOEMPTY
       while (!((curr_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2)) & 0x40)) {
         radioBuf[radioLen++] = LoRa.readRegister(REG_FIFO);
 
@@ -596,6 +726,7 @@ void gtmlabLoop()
         }
       }
     }    
+    prev_IRQ2=curr_IRQ2;
 
     // check PAYLOAD_READY IRQ2 bit (read and saved above)
     if (payReady) {
@@ -617,17 +748,16 @@ void gtmlabLoop()
 
           // not really needed, but helps with debugging
           memset(radioBuf, 0, sizeof(radioBuf));
-
         } else {
           LOGI("REEDSOLO FAIL %cCh=%02d, len=%d, RSSI=-%d", 
                 holdchan ? '*' : (recvData ? 'D':'C'), 
                 currChan, radioLen, pktRSSI>>1);
           cntErrREEDSOLO++;
-          resetState();
+          resetState(true);
         }
       } else {
         LOGD("Invalid rxLen");
-        resetState();
+        resetState(true);
       }
 
       // Finished processing a radio packet, clean up a bit
@@ -649,7 +779,7 @@ void gtmlabLoop()
           currChan,
           pktRSSI>>1, millis()-chanTimer);
     cntErrPRESTALL++;
-    resetState();   // BAILOUT
+    resetState(true);   // BAILOUT
     return;
   }
 
@@ -669,45 +799,108 @@ void gtmlabLoop()
           radioLen-1, radioBuf[0], 
           pktRSSI>>1, millis()-pktStart);
     cntErrPKTSTALL++;
-    resetState();
+    resetState(true);  // dirty
     return;
   }
 
-  if (scanning && !recvData) {
-    // if scanning, hop to next chan every SCAN_DWELL millis
-    if ((millis()-lastHop) > SCAN_DWELL) {
-      cChRSSI = LoRa.readRegister(REG_RSSI_VALUE);
-      // At this point, we're on a control channel that's not receiving anything;
-      // read RSSI, and if channel clear, STAY ON CHANNEL and
-      // send any queued transmission
-      if (cChRSSI > 160) {  // silence level -80dBi, FIXME explain this
-          if (msgQueue[msgQTail].curTTL > 0) {
-            LOGI("CCh=%d(%d), RSSI=-%d, can TX MSG(pos:%d)", 
-                 currCChIdx, currChan, (cChRSSI>>1), msgQTail);
-            txStart();
-            txSendMsg(msgQueue[msgQTail].msgObj, msgQueue[msgQTail].msgLen, 
-                      msgQueue[msgQTail].iniTTL, msgQueue[msgQTail].curTTL);
-            memset(&(msgQueue[msgQTail]), 0, sizeof(struct msgDesc));
-            msgQTail = (msgQTail+1) % MSG_QUEUE_SIZE;
-            resetState();
-          } else if (ackQueue[ackQTail].curTTL > 0) {
-            LOGI("CCh=%d(%d), RSSI=-%d, can TX ACK(pos:%d)", 
-                 currCChIdx, currChan, (cChRSSI>>1), ackQTail);
-            txStart();
-            txSendAck(ackQueue[ackQTail].hashID, ackQueue[ackQTail].hops, 
-                      ackQueue[ackQTail].iniTTL, ackQueue[ackQTail].curTTL);
-            memset(&(ackQueue[ackQTail]), 0, sizeof(struct ackDesc));
-            ackQTail = (ackQTail+1) % ACK_QUEUE_SIZE;
-            resetState();
-          }
-      }
-      // otherwise, just HOP
-      if (!holdchan) {
-        setCtrlChan();
-        lastHop = millis();
-      }
+  if (scanning && !recvData) {   // no operation in progress
+
+    // Check and perform one TX task
+    if (txTask()) {
+      // something was transmitted, radio has been reset, exit to re-enter
+      return;
+    }
+
+    // if scanning, HOP to next ctrl chan every SCAN_DWELL millis
+    if (((millis()-lastHop) > SCAN_DWELL) && !holdchan) {
+      setCtrlChan();
+      lastHop = millis();
     }
   }
+}
+
+
+// called from main loop to check for TX tasks and execute the first in queue
+bool txTask()
+{
+    bool txHold = false;  // hold the transmission of current object (INERTIA)
+    bool txLocal = true;  // the message is originated locally
+
+    if (txBackOff > millis())
+      txHold = true;    // Hold TX if backoff engaged
+
+    unsigned long tStartLBT = millis();
+
+    // Quick notes on INERTIA feature:
+    // When relaying a received object, all nodes on the network would normally
+    // start the relay process at the same time, increasing the risk of collisions
+    // such as reported in issue #3
+    // The INERTIA feature mitigates this by introducing a random delay before
+    // the transmission of a relayed object (but not locally originated objects,
+    // which do not suffer from this issue)
+    // It is similar, but not identical to the concept of random backoff; the
+    // difference is the delay here is applied proactively not reactively
+
+    // Anything queued for sending?
+    if (msgQueue[msgQTail].curTTL > 0) {
+      if (msgQueue[msgQTail].iniTTL != msgQueue[msgQTail].curTTL) {
+        // curTTL == iniTTL indicates a locally originated object (not relayed)
+        // only for relayed objects, use INERTIA to delay TX start
+        txLocal = false;
+        if (millis() - msgQueue[msgQTail].tStamp < txInertia) {
+          txHold = true;
+        }
+      }
+
+      if (! txHold) {
+        // how many data channels? as many as the number of fragments!
+        uint8_t nFrags = ceil(1.0 * msgQueue[msgQTail].msgLen / TXFRAGSIZE);
+        if (findClearChan(nFrags)) {
+          LOGI("LBT(%dms) OK, can TX %s MSG(pos:%d)", (millis() - tStartLBT),
+                txLocal ? "LOC":"RLY", msgQTail);
+          txStart();
+          txSendMsg(msgQueue[msgQTail].msgObj, msgQueue[msgQTail].msgLen,
+                    msgQueue[msgQTail].iniTTL, msgQueue[msgQTail].curTTL);
+          memset(&(msgQueue[msgQTail]), 0, sizeof(struct msgDesc));
+          msgQTail = (msgQTail+1) % MSG_QUEUE_SIZE;
+          resetState(false);
+          return true;
+        } else {
+          int txBack = random(txBackMAX);
+          txBackOff = millis() + txBack;
+          LOGI("LBT(%dms) SKIPPED TX MSG(pos:%d) backoff=%d", (millis() - tStartLBT),
+                msgQTail, txBack);
+        }
+      }
+
+    } else if (ackQueue[ackQTail].curTTL > 0) {
+      if (ackQueue[ackQTail].iniTTL == ackQueue[ackQTail].curTTL) {
+        // curTTL == iniTTL indicates a locally originated object (not relayed)
+        txLocal = false;
+        if (millis() - ackQueue[ackQTail].tStamp < txInertia) {
+          txHold = true;
+        }
+      }
+      if (! txHold) {
+        if (findClearChan(0)) {  // dataChans = 0 = none required
+          LOGI("LBT(%dms) OK, can TX %s ACK(pos:%d)", (millis() - tStartLBT),
+                txLocal ? "LOC":"RLY", ackQTail);
+          txStart();
+          txSendAck(ackQueue[ackQTail].hashID, ackQueue[ackQTail].hops,
+                    ackQueue[ackQTail].iniTTL, ackQueue[ackQTail].curTTL);
+          memset(&(ackQueue[ackQTail]), 0, sizeof(struct ackDesc));
+          ackQTail = (ackQTail+1) % ACK_QUEUE_SIZE;
+          resetState(false);
+          return true;
+        } else {
+          int txBack = random(txBackMAX);
+          txBackOff = millis() + txBack;
+          LOGI("LBT(%dms) SKIPPED TX ACK(pos:%d) backoff=%d", (millis() - tStartLBT),
+                ackQTail, txBack);
+        }
+      }
+    }
+    return false;  // nothing was sent
 }
 
 
@@ -782,6 +975,8 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
       (rxBuf[4]>>4), (rxBuf[4] & 0x0f), rxBuf[5]);
     cntRxPktACK++;
 
+    echoCount(msgH16, true);  // count an ACK
+
     if (inRingBuf(msgH16, rxAckBuf)) {
       LOGI("ACK SEEN BEFORE");
     } else {
@@ -844,6 +1039,8 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
            packetLen, msgH16, (millis()-dataStart), 
            int(sumDChRSSI/(double)dataFrags));
       cntRxDataObjTot++;
+
+      echoCount(msgH16, false);  // count an MSG
 
       if (inRingBuf(msgH16, rxMsgBuf)) {
         LOGI("MSG SEEN BEFORE");
@@ -1054,7 +1251,7 @@ int txEncodeAndSend(uint8_t * pktBuf, uint8_t pktLen, uint8_t pktType)
 }
 
 
-// Send a SYNC packet (will set channel; expects TX mode on)
+// Send a SYNC packet (will set channel to currCChIdx; expects TX mode on)
 int txSendSync(uint8_t chIDX, uint8_t frags, uint8_t iniTTL, uint8_t curTTL)
 {
   uint8_t mBuf[4];
@@ -1063,7 +1260,7 @@ int txSendSync(uint8_t chIDX, uint8_t frags, uint8_t iniTTL, uint8_t curTTL)
   mBuf[2] = iniTTL;
   mBuf[3] = curTTL;
   
-  // CCH already set from main loop, just stay on it
+  // currCChIdx is selected in findClearChan(), which should be called first
   setChan(curRegSet->cChanMap[currCChIdx]); 
 
   LOGI("TX CCh=%02d SYNC(1): chIDX=%d, frags=%d, iniTTL=%d, curTTL=%d", 
@@ -1073,7 +1270,7 @@ int txSendSync(uint8_t chIDX, uint8_t frags, uint8_t iniTTL, uint8_t curTTL)
 }
 
 
-// Send an ACK packet (will set channel; expects TX mode on)
+// Send an ACK packet (will set channel to currCChIdx; expects TX mode on)
 int txSendAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
 {
   uint8_t mBuf[4];
@@ -1083,8 +1280,7 @@ int txSendAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
   mBuf[2] |= (iniTTL & 0x0f);
   mBuf[3] = curTTL;
 
-  // setCtrlChanTX();  // jump to a FREE control channel
-  // CCH already set from main loop, just stay on it
+  // currCChIdx is selected in findClearChan(), which should be called first
   setChan(curRegSet->cChanMap[currCChIdx]); 
 
   LOGI("TX CCh=%02d ACK (3): hash=0x%04x, hops=%d, iniTTL=%d, curTTL=%d", 
@@ -1094,7 +1290,7 @@ int txSendAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
 }
 
 
-// Send a TIME packet (will set channel; expects TX mode on)
+// Send a TIME packet (will set channel to currCChIdx; expects TX mode on)
 int txSendTime(uint64_t time32)
 {
   uint8_t mBuf[4];
@@ -1104,7 +1300,7 @@ int txSendTime(uint64_t time32)
   mBuf[2] = (time32 >> 8) & 0xff;
   mBuf[3] = time32 & 0xff;
 
-  // CCH already set from main loop, just stay on it
+  // currCChIdx is selected in findClearChan(), which should be called first
   setChan(curRegSet->cChanMap[currCChIdx]); 
 
   LOGI("TX CCh=%02d TIME(0): 0x%08x", currChan, time32);
@@ -1116,7 +1312,8 @@ int txSendTime(uint64_t time32)
 
 // Send a message
 // This is a complex action involving several packets
-// (will set channel; expects TX mode on)
+// - will set channel using the values provided in currCChIdx and currDChIdx
+// - expects TX mode on)
 int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
 {
   uint8_t oBuf[128];   // output buffer
@@ -1138,14 +1335,12 @@ int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
   txMsgBuf[txMsgPos++] = msgH16;
   txMsgPos %= HASH_BUF_LEN;
 
-  // pick a random data channel
-  currDChIdx = random(curRegSet->dChanNum - 1);
-
   // send sync packet
   txSendSync(currDChIdx, nFrags, iniTTL, curTTL);
 
   // allow some time for receivers to switch channel
   // from experiments, a value of 10ms works well here
+  // delay(txSyncDelay - txPackDelay);
   delay(txSyncDelay);
 
   for (int i=0; i<nFrags; i++) {
@@ -1167,7 +1362,7 @@ int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
     // hop to next channel in chan map
     currDChIdx++;
     currDChIdx %= curRegSet->dChanNum;
-    setDataChanX(currDChIdx);
+    setDataChanX(currDChIdx);  // will block until settled
 
     // send the fragment
     txEncodeAndSend(oBuf, oLen, PKT_TYPE_DATA);
@@ -1175,8 +1370,8 @@ int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
 
     // output after data upload, to avoid any uncontrolled delays
     LOGI("TX DCh=%02d DATA(2): len=%d, fragIDX=%d", currChan, oLen-2, i);
-
     while (!LoRa.readRegister(REG_IRQ_FLAGS_2) & 0x40);  // wait for FifoEmpty
+
     delay(txPackDelay);  // wait for others
   }
   cntTxDataObjTot++;
@@ -1192,6 +1387,7 @@ bool txEnQueueMSG(uint8_t * msgObj, uint16_t msgLen, uint8_t iniTTL, uint8_t cur
   }
   msgQueue[msgQHead].iniTTL = iniTTL;
   msgQueue[msgQHead].curTTL = curTTL;
+  msgQueue[msgQHead].tStamp = millis();
   msgQueue[msgQHead].msgLen = msgLen;
   memcpy(msgQueue[msgQHead].msgObj, msgObj, msgLen);
   msgQHead = (msgQHead+1) % MSG_QUEUE_SIZE;
@@ -1209,9 +1405,87 @@ bool txEnQueueACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
   }
   ackQueue[ackQHead].iniTTL = iniTTL;
   ackQueue[ackQHead].curTTL = curTTL;
+  ackQueue[ackQHead].tStamp = millis();
   ackQueue[ackQHead].hashID = hashID;
   ackQueue[ackQHead].hops = hops;
   ackQHead = (ackQHead+1) % ACK_QUEUE_SIZE;
 
   return true;
 }
+
+
+////////// Some additional tools & experiments below //////////
+
+// ECHO COUNTER
+// For each object TXd or RXd, count the number of copies we received back
+// Two important applications:
+// - roughly estimate the size of the reachable network
+// - puddingproof the relaying efficiency of our nodes (when starting up
+//   a new LAB relay, do we CONSISTENTLY see an extra echo? compare with
+//   GTM relays)
+// Call echoCount(hashID, isACK), the number of echoes will be logged at INFO
+
+#define ECHOSIMTRACK 8  // max echoes to track simultaneously, of each type
+struct echoDesc {
+  unsigned long tStamp;
+  uint16_t hashID;
+  uint8_t count;
+};
+
+// one dataset for MSGs, one for ACKs
+echoDesc Echoes[ECHOSIMTRACK * 2] = {0};
+uint8_t echoHead[2] = {0};
+
+void echoCount(uint16_t hashID, bool isACK)
+{
+  uint8_t hx = 0;  // which dataset, MSG or ACK
+  uint8_t i = 0;   // index into arrays
+
+  if (isACK)
+    hx = 1;
+
+  echoDesc * e = & Echoes[hx * ECHOSIMTRACK];
+
+  bool found = false;
+  for (i = 0; i < ECHOSIMTRACK; i++) {
+    if (e[i].hashID == hashID) {
+      found = true;
+      e[i].count++;
+      //LOGI("ECHO(%s:%04x)=%d t=%d", isACK ? "ACK":"MSG", hashID,
+      //      e[i].count, millis() - e[i].tStamp);
+      break;
+    }
+  }
+  if (!found) {
+    i = echoHead[hx];
+    e[i].hashID = hashID;
+    e[i].count = 1;
+    e[i].tStamp = millis();
+    echoHead[hx] = (echoHead[hx] + 1) % ECHOSIMTRACK;
+  }
+
+  int cnt = 0;
+  int sum = 0;
+
+  // Format the last ECHOSIMTRACK message echo counts, new-to-old
+  // FIXME? is the reversed arrow-of-time a problem?
+  char formatted[33] = {0};
+  int pos = 0;
+  for (int j = 0; j < ECHOSIMTRACK; j++) {
+    // sum for average
+    if ((i != j) && (e[j].count >0)) {
+      sum += e[j].count;
+      cnt ++;
+    }
+
+    // format for output
+    pos += sprintf(formatted + pos, "%d ", e[(ECHOSIMTRACK+i-j) % ECHOSIMTRACK].count);
+  }
+  if (cnt) {
+    LOGI("ECHO(%s:%04x)=%d t=%d AVG=%02.2f [ %s]", isACK ? "ACK":"MSG", hashID,
+            e[i].count, millis() - e[i].tStamp, 1.0 * sum / cnt, formatted);
+  }
+  return;
+}
+
+////
