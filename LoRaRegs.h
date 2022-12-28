@@ -1,5 +1,5 @@
 // LORAX - FSK/OOK (non-LoRa) compat library for rfm9x LoRa radios
-// Copyright (c) 2021 by https://github.com/sybip (gpg 0x8295E0C0)
+// Copyright 2021-2022 by https://github.com/sybip (gpg 0x8295E0C0)
 // Released under MIT license (see LICENSE file for full details)
 //
 // based on https://github.com/sandeepmistry/arduino-LoRa
@@ -59,6 +59,7 @@
 #define REG_PACKET_CONFIG_2      0x31
 #define REG_PAYLOAD_LENGTH       0x32
 #define REG_FIFO_THRESHOLD       0x35
+#define REG_IMAGE_CAL            0x3b
 #define REG_IRQ_FLAGS_1          0x3e
 #define REG_IRQ_FLAGS_2          0x3f
 #define REG_PLL_HOP              0x44

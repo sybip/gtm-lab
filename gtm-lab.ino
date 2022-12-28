@@ -1,7 +1,7 @@
 //
 // GTM LAB - goTenna Mesh protocol playground
 // ------------------------------------------
-// Copyright (c) 2021 by https://github.com/sybip (gpg 0x8295E0C0)
+// Copyright 2021-2022 by https://github.com/sybip (gpg 0x8295E0C0)
 // Released under MIT license (see LICENSE file for full details)
 //
 
@@ -15,6 +15,8 @@ uint16_t conLen=0;
 // playHarder.cpp is our debug console aka the "playground"
 //  send commands received via usb serial, and stuff happens
 void playInit();
+void playLoop();
+
 int conExec(char *conBuf, uint16_t conLen);
 
 
@@ -37,6 +39,11 @@ void loop()
 {
   // call radio 
   gtmlabLoop();
+
+  if (!gtmlabBusy()) {
+    // playground tasks
+    playLoop();
+  }
 
   // serial console input
   while (Serial.available()) {

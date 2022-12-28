@@ -1,7 +1,7 @@
 //
 // GTM LAB - goTenna Mesh protocol playground
 // ------------------------------------------
-// Copyright (c) 2021 by https://github.com/sybip (gpg 0x8295E0C0)
+// Copyright 2021-2022 by https://github.com/sybip (gpg 0x8295E0C0)
 // Released under MIT license (see LICENSE file for full details)
 //
 
@@ -68,6 +68,15 @@ typedef enum {
 #define MSG_CLASS_SHOUT 2
 #define MSG_CLASS_EMERG 3
 
+// Different RX Error types that we track separately
+#define RXERR_DEFAULT 0
+#define RXERR_PRESTALL 1
+#define RXERR_PKTSTALL 2
+#define RXERR_LOSTSYNC 3
+#define RXERR_REEDSOLO 4
+#define RXERR_CRC16BAD 5
+#define RXERR_MISSCHAN 6
+
 // Binary output macros
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
 #define BYTE_TO_BINARY(byte)  \
@@ -85,10 +94,11 @@ typedef enum {
 struct regSet {
   uint32_t baseFreq;      // base frequency
   uint32_t chanStep;      // channel step
+  uint8_t tChanNum;       // total number of chans: data + ctrl + unused (if any)
   uint8_t cChanNum;       // number of control channels
-  uint8_t cChanMap[3];    // map of control channels
+  uint8_t cChanMap[8];    // map of control channels
   uint8_t dChanNum;       // number of data channels
-  uint8_t dChanMap[48];   // map of data channels
+  uint8_t dChanMap[64];   // map of data channels
 };
 
 
@@ -101,6 +111,8 @@ extern uint8_t currChan;    // current channel NUMBER
 extern uint8_t currDChIdx;  // current data chan INDEX in map
 extern uint8_t currCChIdx;  // current ctrl chan INDEX in map
 extern bool relaying;       // enable mesh relay function
+extern bool noDeDup;
+extern bool ezOutput;       // enable simple hexdump output of RX/TX events
 extern regSet regSets[];
 extern regSet * curRegSet;
 extern uint8_t txSyncDelay;   // millis to wait between sync packet and first data packet
@@ -109,6 +121,10 @@ extern esp_log_level_t logLevel;
 extern unsigned long chanTimer;
 extern uint16_t txInertia;    // INERTIA - millis to wait before TX
 extern uint16_t txInerMAX;    // INERTIA - maximum value
+extern uint8_t lbtThreDBm;    // LBT threshold in -dBm (abs)
+extern uint8_t gtmTxPower;    // Current Tx Power
+extern unsigned long lastRadioRx; // millis when we last received (a valid packet)
+extern unsigned long lastRadioTx; // millis when we last transmitted
 
 // COUNTERS
 // ACK packets received
@@ -139,6 +155,8 @@ extern uint32_t cntErrPRESTALL;
 extern uint32_t cntErrLOSTSYNC;
 extern uint32_t cntErrREEDSOLO;
 extern uint32_t cntErrCRC16BAD;
+extern uint32_t cntErrMISSCHAN;
+extern uint32_t cntErrTXJAMMED;
 
 // LBT COUNTERS
 extern uint32_t cntCChBusy;
@@ -146,13 +164,45 @@ extern uint32_t cntCChFree;
 extern uint32_t cntDChBusy;
 extern uint32_t cntDChFree;
 
+// TIME TRACKING
+#define TIMETRACK_MILLIS (3600 * 1000)   // one hour per period
+#define TIMETRACK_PERIODS 25     // total 25 periods
+
+// Time tracker
+struct timeTrack {
+  uint32_t timeTX;    // time spent in TX
+  uint32_t timeRX;    // time spent in RX
+  uint32_t timeLBT;   // time spent listening before TX
+  uint32_t timeEvt;   // time spent in handler events
+};
+
+extern timeTrack TTRK[TIMETRACK_PERIODS];
+extern uint8_t ttCurPeriod;
+uint32_t ttGetPeriod();
+unsigned long ttPeriodTime();
+
+// event (mostly error) count tracker
+struct evCntTrack {
+  uint16_t errors;    // total errors
+};
+
+extern evCntTrack ETRK[TIMETRACK_PERIODS];
+
+
 // event handler functions
 extern bool (* onRxMSG)(uint8_t *, uint16_t, uint8_t, uint8_t, uint8_t);
 extern bool (* onRxACK)(uint16_t, uint8_t, uint8_t, uint8_t, uint8_t);
+extern bool (* onTxMSG)(uint16_t);
+extern bool (* onTxACK)(uint16_t);
+extern bool (* onRxERR)(uint16_t);
+
 
 // builtin event handlers
 bool builtinRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI);
 bool builtinRxACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI);
+bool builtinRxERR(uint16_t error);
+bool builtinTxMsgOK(uint16_t hashID);
+bool builtinTxAckOK(uint16_t hashID);
 
 // additive CRC16 function
 uint16_t CRC16_add(uint8_t b, uint16_t crc = 0);
@@ -167,8 +217,18 @@ uint16_t msgHash16(uint8_t* mBuf);
 // Argument: ESP log level, -1 for printf
 void dumpRegisters(int logLevel);
 
+// Reset all counters
+void gtmlabResetCounts();
+
+// setTxPower (in dBm)- wrapper for LoRa.setTxPower()
+// use this instead of calling setTxPower() directly
+void gtmSetTxPower(uint8_t txPower);
+
 // Look up a hash in one of the hash ringbuffers
 bool inRingBuf(uint16_t needle, uint16_t *haystack);
+
+// Query current radio frequency by reading REG_FRF_* registers directly
+unsigned long getFrequency();
 
 // Set frequency, argument is channel number (0 to NUMCHANS)
 void setChan(uint8_t chan);
@@ -193,11 +253,22 @@ void gtmlabInit();
 // Call from Arduino loop to perform receiving tasks
 void gtmlabLoop();
 
+// Check (from Arduino loop) if gtm main loop is in a busy state and
+//  would prefer to not be held up by a lengthy non-gtm task
+bool gtmlabBusy();
+
+// Check (e.g from Arduino loop) if tx queue contains any objects
+//   (which would be tx-ed on the next call to gtmTxTask)
+bool gtmlabTxEmpty();
+
 // called from radio receiver for each good packet received
 int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI);
 
+// called from main loop to check radio and perform RX tasks
+bool gtmlabRxTask();
+
 // called from main loop to check for TX tasks and execute the first in queue
-bool txTask();
+bool gtmlabTxTask();
 
 // Prepares the radio and state buffers for transmitting one or more packets
 // There are a few things that need to be done before hitting TX on that radio

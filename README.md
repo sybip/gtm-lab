@@ -12,12 +12,12 @@ While the long-term goal of the project is a fully GTM interoperable open-source
 protocol stack running on open-source hardware, the short term goal is really just 
 to have fun and share the lessons learned.
 
-So, if protocol reverse-engineering and exploring the sub-GHz ISM band are 
+So, if protocol reverse-engineering and exploring the sub-GHz ISM band are
 your idea of fun too, grab a copy of the code and give it a spin!
 
 ## Development status
-Executive summary: **can send and receive messages** to/from the goTenna 
-mesh network.
+Executive summary: **can send, receive and relay messages** to/from the 
+goTenna mesh network.
 
 ### RX capability:
 - full GTM waveform reception including error correction
@@ -31,7 +31,10 @@ mesh network.
 - listen-before-talk on all channels
 
 ### Relay/mesh capability:
-- operational at net-positive performance (improves message propagation)
+The relay function is operational at net-positive performance; 
+it works on its own, or in conjunction with existing nodes, to extend 
+the mesh network coverage and performance, while avoiding any harmful 
+interference with existing network traffic.
 
 ## Interop testing
 The software is tested for interoperation with:
@@ -39,14 +42,15 @@ The software is tested for interoperation with:
 - goTenna Mesh, firmware 1.1.8
 
 ## Code quality
-Could be indulgently described as *barely functional early-proof-of-concept*
+As should be painfully obvious, this is experimental proof-of-concept code, 
+not intended and not suitable for any serious application.
 
 ## Supported hardware
 - **Easy:** out of the box, the code contains pre-defined configurations for 
-two widely available, **open-source hardware** boards, selectable via the 
+three widely available, **open-source hardware** boards, selectable via the 
 `BOARD_TYPE` definition in the configuration file:
   - [LILYGO T-Beam 1.0](https://github.com/Xinyuan-LilyGO/LilyGO-T-Beam) and newer
-  - [Sparkfun WRL-15006](https://github.com/sparkfun/ESP32_LoRa_1Ch_Gateway)
+  - [Sparkfun WRL-15006](https://github.com/sparkfun/ESP32_LoRa_1Ch_Gateway) (not recommended)
   - [Sparkfun MicroMod](https://github.com/sparkfun/SparkFun_MicroMod_Main_Board_Single) with [ESP32 CPU](https://github.com/sparkfun/MicroMod_ESP32_Processor) and [1W LoRa module](https://github.com/sparkfun/MicroMod_Function_LoRa_1W)
 
 - **Medium:** any ESP32 board with an SPI-connected RFM95W or compatible 
@@ -73,6 +77,12 @@ its 18650 Li-Ion battery holder with on-board management and built-in
 u-blox NEO GPS will come in handy in future experiments.
 Make sure to select the 915MHz "USA" version, which covers all goTenna Mesh 
 bands worldwide.
+
+The Sparkfun WRL-15006 has the worst RX performance of all supported models 
+and is therefore the least recommended. If you already have one, use it while
+you're waiting for your T-Beam order to arrive. :)
+
+The 1W Sparkfun MicroMod shows promise but needs more testing.
 
 ### Build environment requirements
 [Arduino IDE](https://www.arduino.cc/en/software/) 1.8+ with [ESP32 support](https://github.com/espressif/arduino-esp32)
@@ -147,7 +157,7 @@ script to study the format of the packets and extract useful information.
 Example: [metalogger](https://gist.github.com/sybip/4b754010cf5a667c161f3ae3d8d106ef).
 
 The pyGT module [`gtairobj.py`](https://github.com/sybip/pyGT/blob/master/gtairobj.py)
-contains function for parsing and creating GTM radio protocol objects compatible with
+contains functions for parsing and creating GTM radio protocol objects compatible with
 the gtm-lab test console.
 
 ### Test console

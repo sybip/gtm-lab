@@ -1,7 +1,7 @@
 //
 // GTM LAB - goTenna Mesh protocol playground
 // ------------------------------------------
-// Copyright (c) 2021 by https://github.com/sybip (gpg 0x8295E0C0)
+// Copyright 2021-2022 by https://github.com/sybip (gpg 0x8295E0C0)
 // Released under MIT license (see LICENSE file for full details)
 //
 
@@ -10,6 +10,8 @@
 #include "LoRaX.h"
 #include "gtmRadio.h"
 #include "gtmConfig.h"
+
+#include "gtmXDiscover.h"
 
 // THE HARDCORE PLAYGROUND
 // -----------------------
@@ -40,7 +42,17 @@ SFE_UBLOX_GNSS myGPS;
 
 #endif  // USE_UBXGPS
 
-#define PLAY_VER 2022112201   // Playground version
+// define USE_GTMBLE to include and use the BLE GTM API server
+// Library gtmBLE is required
+#ifdef USE_GTMBLE
+#include "gtmBLE.h"
+#endif  // USE_GTMBLE
+
+#ifdef ESP32
+#include "esp_system.h"
+#endif
+
+#define PLAY_VER 2022122201   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -60,6 +72,10 @@ SFE_UBLOX_GNSS myGPS;
 uint16_t appID = DFLT_APPID;  // defined in gtmConfig.h
 uint8_t testITTL = 3;   // initial TTL for test messages
 uint8_t testCTTL = 2;   // current TTL for test messages
+
+uint8_t chanRSSI[64] = { 0 };   // shouldn't be that many channels, max known is 51
+char symbRSSI[64] = { 0 };      // symbolic representation of RSSI
+char symbList[] = { '#', '=', '-', ' ' };
 
 // Assembles and sends a "shout" message with the supplied string as message body
 // (thanks to https://gitlab.com/almurphy for the Arduino implementation)
@@ -269,6 +285,15 @@ void playInit()
 #endif  // HAS_UBXGPS
 }
 
+// called from arduino loop
+void playLoop()
+{
+  // any discovery in progress?
+  if(discoverInit && (millis() - discoverInit > 5000)) {
+    discoverFinish();
+  }
+}
+
 // Console input handler
 // executed for each line received on the serial console
 // - if first character is '!', treat the line as a command
@@ -405,7 +430,7 @@ int conExec(char *conBuf, uint16_t conLen)
       uint8_t txPower = strtoul(hexBuf, NULL, 10) & 0xff;
       if (txPower > MAX_TX_POWER)
         txPower = MAX_TX_POWER;
-      LoRa.setTxPower(txPower);
+      gtmSetTxPower(txPower);
       LOGI("SET TX Power: %ddBm", txPower);
 
     } else if (conBuf[2] == 'a') {
@@ -449,6 +474,14 @@ int conExec(char *conBuf, uint16_t conLen)
       while (Serial.available())
         Serial.read();
 
+    } else if (conBuf[2] == 'o') {
+      if (conBuf[3] == '0') {
+        ezOutput = false;
+      } else if (conBuf[3] == '1') {
+        ezOutput = true;
+      }
+      LOGI("Easy Output is now %s", (ezOutput ? "ON":"OFF"));
+
 #ifdef HAS_UBXGPS
     } else if (conBuf[2] == 'c') {
         if (conBuf[3] == 'g') {  // setclock from gps
@@ -465,6 +498,26 @@ int conExec(char *conBuf, uint16_t conLen)
           }
         }
 #endif  // HAS_UBXGPS
+
+#ifdef USE_GTMBLE
+    } else if (conBuf[2] == 'b') {
+      // status
+      if (conBuf[3] == '0') {
+        if (gtmBLEStatus()) {
+          LOGI("BLE: turning OFF");
+          gtmBLEStop();
+        } else {
+          LOGI("BLE is already OFF");
+        }
+      } else if (conBuf[3] == '1') {
+        if (! gtmBLEStatus()) {
+          LOGD("BLE: turning ON");
+          gtmBLEInit();
+        } else {
+          LOGI("BLE is already ON");
+        }
+      }
+#endif  // USE_GTMBLE
     }
 
   } else if (conBuf[1] == 'd') {
@@ -485,6 +538,11 @@ int conExec(char *conBuf, uint16_t conLen)
       }
       printf("\n");
 
+    } else if (conBuf[2] == 'q') {
+      // DUMP RF SETTINGS
+      printf("FREQ: %d\n", getFrequency());
+      printf("\n");
+
     } else if (conBuf[2] == 'c') {
       // uint32_t cntRxPktAll = cntRxPktSYNC + cntRxPktDATA + cntRxPktACK + cntRxPktTIME;
       // uint32_t cntRxErrAll = cntErrPRESTALL + cntErrPKTSTALL + cntErrLOSTSYNC + cntErrREEDSOLO + cntErrCRC16BAD;
@@ -500,12 +558,16 @@ int conExec(char *conBuf, uint16_t conLen)
       printf("TX OBJECTS:\n- DATA: %d (%d own, %d relay)\n-  ACK: %d (%d own, %d relay)\n", 
              cntTxDataObjTot, (cntTxDataObjTot - cntTxDataObjRel), cntTxDataObjRel, 
              cntTxPktACK, (cntTxPktACK - cntTxPktACKRel), cntTxPktACKRel);
-      printf("ERRORS:\n");
+      printf("RX ERRORS:\n");
       printf("- PRESTALL: %d\n", cntErrPRESTALL);
       printf("- PKTSTALL: %d\n", cntErrPKTSTALL);
       printf("- LOSTSYNC: %d\n", cntErrLOSTSYNC);
       printf("- REEDSOLO: %d\n", cntErrREEDSOLO);
       printf("- CRC16BAD: %d\n", cntErrCRC16BAD);
+      printf("- MISSCHAN: %d\n", cntErrMISSCHAN);
+
+      printf("TX ERRORS:\n");
+      printf("- TXJAMMED: %d\n", cntErrTXJAMMED);
 
       printf("LBT COUNTERS:\n");
       printf("- CTRLFREE: %d\n", cntCChFree);
@@ -524,21 +586,40 @@ int conExec(char *conBuf, uint16_t conLen)
       printf("INTXMODE: %s\n", inTXmode ? "ON":"OFF");
       printf("CURRCHAN: %d\n", currChan);
       printf("CHANTIME: %d ms\n", millis() - chanTimer);
+      printf("LASTRECV: %d ms\n", millis() - lastRadioRx);
+      printf("LASTXMIT: %d ms\n", millis() - lastRadioTx);
       printf("INERTIA : %d (max=%d)\n", txInertia, txInerMAX);
+      printf("LBT_THRE: -%d dBm\n", lbtThreDBm);
       printf("PKTDELAY: SYNC=%d DATA=%d\n", txSyncDelay, txPackDelay);
       printf("RELAYING: %s\n", relaying ? "ON":"OFF");
       printf("BASEFREQ: %d\n", curRegSet->baseFreq);
       printf("CHANSTEP: %d\n", curRegSet->chanStep);
       printf("CCHANNUM: %d\n", curRegSet->cChanNum);
       printf("DCHANNUM: %d\n", curRegSet->dChanNum);
+      printf("TX_POWER: %d dBm\n", gtmTxPower);
       printf("TestITTL: %d\n", testITTL);
       printf("TestCTTL: %d\n", testCTTL);
       printf("MY_APPID: 0x%04x\n", appID);
+      printf("NO_DEDUP: %s\n", noDeDup ? "ON":"OFF");
+      printf("EZOUTPUT: %s\n", ezOutput ? "ON":"OFF");
       printf("SYS_TIME: %04d-%02d-%02d %02d:%02d:%02d\n", 
              year(), month(), day(), hour(), minute(), second());
 #ifdef HAS_UBXGPS
       printf("UBLOXGPS: %s\n", gpsAct ? "ON":"OFF");
 #endif  // HAS_UBXGPS
+#ifdef USE_GTMBLE
+      switch(gtmBLEStatus()) {
+        case BLE_SERVICE_CONNECTED:
+          printf("BLE_SERV: CONNECTED\n");
+          break;
+        case BLE_SERVICE_ACCEPTING:
+          printf("BLE_SERV: ACCEPTING\n");
+          break;
+        case BLE_SERVICE_DISABLED:
+          printf("BLE_SERV: DISABLED\n");
+          break;
+      }
+#endif  // USE_GTMBLE
 
 #ifdef HAS_UBXGPS
 
@@ -567,6 +648,29 @@ int conExec(char *conBuf, uint16_t conLen)
       }
 #endif  // HAS_UBXGPS
 
+#ifdef USE_GTMBLE
+    } else if (conBuf[2] == 'b') {
+      // FIXME redundant, make function?
+      switch(gtmBLEStatus()) {
+        case BLE_SERVICE_CONNECTED:
+          printf("BLE_SERV: CONNECTED\n");
+          break;
+        case BLE_SERVICE_ACCEPTING:
+          printf("BLE_SERV: ACCEPTING\n");
+          break;
+        case BLE_SERVICE_DISABLED:
+          printf("BLE_SERV: DISABLED\n");
+          break;
+      }
+      printf("LAST_CHG: %ds ago\n", tLastConnChg);
+      printf("CONNECTS: %d\n", cntConnects);
+      printf("COMMANDS: %d\n", cntCommands);
+      printf(" SUCCESS: %d\n", cntRSuccess);
+      printf(" FAILURE: %d\n", cntRFailure);
+      printf(" NEITHER: %d\n", cntRNeither);
+
+#endif  // USE_GTMBLE
+
     } else if (conBuf[2] == 'r') {
       if (conLen == 5) {
         memcpy(hexBuf, conBuf+3, 2);
@@ -574,6 +678,49 @@ int conExec(char *conBuf, uint16_t conLen)
         wVal = LoRa.readRegister(wReg);
         printf("0x%02x | 0x%02x | "BYTE_TO_BINARY_PATTERN"\n", wReg, wVal, BYTE_TO_BINARY(wVal));
       }
+
+    } else if (conBuf[2] == 'w') {
+      // sWeep all channels
+      unsigned long scanEnd = millis() + 500;  // (ms)
+      if (conLen == 5) {
+        memcpy(hexBuf, conBuf+3, 2);
+        scanEnd = millis() + strtoul(hexBuf, NULL, 10) * 1000;
+      }
+
+      uint8_t oChan = currChan;
+      while (millis() < scanEnd) {
+        for (uint8_t chan = 0; chan < curRegSet->tChanNum; chan++) {
+            setChan(chan);
+            delay(2);  // ms
+            chanRSSI[chan] = LoRa.readRegister(REG_RSSI_VALUE);
+            symbRSSI[chan] = symbList[chanRSSI[chan]>>6];
+            symbRSSI[chan+1] = 0;
+        }
+        printf("%d [%s]\n", millis(), symbRSSI);
+      }
+      setChan(oChan);
+
+    } else if (conBuf[2] == 't') {
+      // time tracking
+      uint16_t tPeriod = ttGetPeriod();
+      uint16_t lPeriod = tPeriod;
+      if (lPeriod)
+        lPeriod--;
+      else
+        lPeriod = TIMETRACK_PERIODS - 1;
+      unsigned long tPTime = ttPeriodTime();
+      if (tPTime == 0)   // avoid zero division
+        tPTime = 1;
+      printf("PERIOD: %d/%d\n", tPeriod, TIMETRACK_PERIODS);
+      printf("PERIOD TIME: %d/%d\n", tPTime, TIMETRACK_MILLIS);
+      printf("- TIME TX : %d (%.2f%%/%.2f%%)\n", TTRK[tPeriod].timeTX,
+              100.0*TTRK[tPeriod].timeTX/tPTime, 100.0*TTRK[lPeriod].timeTX/TIMETRACK_MILLIS);
+      printf("- TIME RX : %d (%.2f%%/%.2f%%)\n", TTRK[tPeriod].timeRX,
+              100.0*TTRK[tPeriod].timeRX/tPTime, 100.0*TTRK[lPeriod].timeRX/TIMETRACK_MILLIS);
+      printf("- TIME LBT: %d (%.2f%%/%.2f%%)\n", TTRK[tPeriod].timeLBT,
+              100.0*TTRK[tPeriod].timeLBT/tPTime, 100.0*TTRK[lPeriod].timeLBT/TIMETRACK_MILLIS);
+      printf("- TIME EVT: %d (%.2f%%/%.2f%%)\n", TTRK[tPeriod].timeEvt,
+              100.0*TTRK[tPeriod].timeEvt/tPTime, 100.0*TTRK[lPeriod].timeEvt/TIMETRACK_MILLIS);
     }
     printf("---\n");
 
@@ -585,6 +732,16 @@ int conExec(char *conBuf, uint16_t conLen)
     wVal = strtoul(hexBuf, NULL, 16) & 0xff;
     LOGI("Write: %02x = %02x", wReg, wVal);
     LoRa.writeRegister(wReg, wVal);
+
+  } else if (conBuf[1] == 'f') {  // FILTERING
+    if (conBuf[2] == 'd') {
+      if (conBuf[3] == '0') {
+        noDeDup = true;
+      } else if (conBuf[3] == '1') {
+        noDeDup = false;
+      }
+      LOGI("Duplicate Filter is now %s", (noDeDup ? "OFF":"ON"));
+    }
 
   } else if (conBuf[1] == 't') {
     if (conBuf[2] == 'd') {
@@ -644,6 +801,10 @@ int conExec(char *conBuf, uint16_t conLen)
         testMessage(0);
       }
 
+    } else if (conBuf[2] == 'e') {
+      // TEST/ECHO
+      discoverStart();
+
     } else if (conBuf[2] == 'k') {
       // TEST/ATAK - send a random ATAK PLI message
       testTakPLI();
@@ -652,13 +813,13 @@ int conExec(char *conBuf, uint16_t conLen)
   } else if (conBuf[1] == 'z') {
     // Reset (Zero) some internal variables
     if (conBuf[2] == 'c') {  // counters (from !dc)
-      cntRxPktSYNC = cntRxPktDATA = cntRxPktACK = cntRxPktTIME = 0;
-      cntTxPktSYNC = cntTxPktDATA = cntTxPktACK = cntTxPktTIME = 0;
-      cntRxDataObjTot = cntRxDataObjUni = cntRxPktACK = cntRxPktACKUni = 0;
-      cntTxDataObjTot = cntTxDataObjRel = cntTxPktACK = cntTxPktACKRel = 0;
-      cntErrPRESTALL = cntErrPKTSTALL = cntErrLOSTSYNC = cntErrREEDSOLO = cntErrCRC16BAD = 0;
-      cntCChFree = cntCChBusy = cntDChFree = cntDChBusy = 0;
+      gtmlabResetCounts();
       LOGI("ALL COUNTERS RESET");
+#ifdef ESP32
+    } else if (conBuf[2] == 'z') {  // reboot
+      LOGI("REBOOT");
+      esp_restart();
+#endif
     } else {
       LOGW("UNKNOWN COMMAND");
     }

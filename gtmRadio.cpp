@@ -1,7 +1,7 @@
 //
 // GTM LAB - goTenna Mesh protocol playground
 // ------------------------------------------
-// Copyright (c) 2021 by https://github.com/sybip (gpg 0x8295E0C0)
+// Copyright 2021-2022 by https://github.com/sybip (gpg 0x8295E0C0)
 // Released under MIT license (see LICENSE file for full details)
 //
 
@@ -43,7 +43,7 @@
 
 regSet regSets[] = {
   // REGION=US
-  { 902500000, 500000, 
+  { 902500000, 500000, 51,
     3, { 1, 25, 49 },
     48, { 7, 42, 41, 46, 48, 45, 11, 18, \
           6, 2, 26, 13, 19, 39, 37, 43, \
@@ -54,13 +54,13 @@ regSet regSets[] = {
   },
 
   // REGION=EU
-  { 869425000, 50000,
+  { 869425000, 50000, 5,
     2, { 0, 4 },
     3, { 1, 2, 3 },
   },
 
   // REGION=AU
-  { 915500000, 500000,
+  { 915500000, 500000, 25,
     3, { 1, 12, 23 },
     22, { 7, 11, 18, 6, 2, 13, 19, 10, \
           15, 20, 16, 21, 22, 0, 9, 24, \
@@ -68,7 +68,7 @@ regSet regSets[] = {
   },
 
   // REGION=JP
-  { 920500000, 500000,
+  { 920500000, 500000, 9,
     2, { 0, 8 },
     7, { 7, 6, 2, 1, 4, 3, 5 },
   }
@@ -104,8 +104,9 @@ int freqdev = 12500;
 #define PKT_TIMEOUT 42 // millis
 #define PRE_TIMEOUT 20  // data channel preamble timeout
 #define LBT_SILENCE 10 // millis to listen for silence before tx
+#define LBT_MAX_HITS 10 // max number of consecutive LBT hits allowed
 #define SCAN_DWELL 10  // millis
-#define SILENCE_DBI 80  // (presumed negative)
+#define SILENCE_DBM 80  // (presumed negative)
 // FIFO threshold must be ONE LESS than the smallest TX packet
 //   otherwise TX will not start, causing issue #2
 #define FIFOTHRE 14  // smallest packet is 1-byte DATA (air size=15)
@@ -133,9 +134,11 @@ int wantLen = 0;
 
 // Msg hash ringbuffers
 uint16_t rxAckBuf[HASH_BUF_LEN] = { 0 };
+uint16_t txAckBuf[HASH_BUF_LEN] = { 0 };
 uint16_t rxMsgBuf[HASH_BUF_LEN] = { 0 };
 uint16_t txMsgBuf[HASH_BUF_LEN] = { 0 };
 uint8_t rxAckPos = 0;
+uint8_t txAckPos = 0;
 uint8_t rxMsgPos = 0;
 uint8_t txMsgPos = 0;
 
@@ -157,6 +160,8 @@ uint8_t currCChIdx = 0; // current ctrl chan INDEX in map
 unsigned long lastCChAct[4] = { 0, 0, 0, 0 };
 
 bool relaying = DFLT_RELAY;  // enable mesh relay function
+bool noDeDup = false;  // disable duplicate filtering in RX
+bool ezOutput = true;  // enable simple hexdump output of RX/TX events
 
 esp_log_level_t logLevel = VERBOSITY;  // in case we want to query it
 
@@ -165,11 +170,14 @@ unsigned long pktStart = 0;   // millis when packet RX started (preamble detecte
 unsigned long dataStart = 0;  // millis when data RX started
 unsigned long lastHop = 0;    // millis when we last hopped ctrl chan
 unsigned long chanTimer = 0;  // millis when we entered current channel
+unsigned long lastRadioRx = 0; // millis when we last received (a valid packet)
+unsigned long lastRadioTx = 0; // millis when we last transmitted
 
 uint16_t txInertia = 0;   // INERTIA - millis to wait before TX
 uint16_t txInerMAX = 600; // INERTIA - maximum value
 unsigned long txBackOff = 0; // Tx retry backoff
 uint16_t txBackMAX = 200;   // Tx max backoff
+uint8_t lbtThreDBm = SILENCE_DBM;  // LBT threshold in -dBm (abs)
 
 // RSSI, keep it simple
 uint8_t pktRSSI = 0;  // absolute value; RSSI = -RssiValue/2[dBm]
@@ -177,6 +185,8 @@ uint8_t cChRSSI = 0;  // control chan RSSI (for LBT)
 uint16_t sumDChRSSI = 0;  // sum of data channel RSSI, for averaging
 uint8_t regRSSI_TS = 2;   // RSSI register time to settle [ms]
 // actual formula: TS[ms] = 2 ^ (RSSI_SMOOTHING+1) / (4 * RX_BW)
+
+uint8_t gtmTxPower = 0;  // set by gtmSetTxPower for easy access
 
 // Interrupt Status Registers - stored previous values
 uint8_t prev_IRQ1 = 0, prev_IRQ2 = 0;
@@ -211,7 +221,6 @@ uint8_t msgQHead = 0, msgQTail = 0;
 uint8_t ackQHead = 0, ackQTail = 0;
 
 // number of calls to gtmLabLoop() per received packet
-// (it's currently not optimal, we need to bring it way down)
 int pktLoops = 0;    // 20210303 PKTLOOPS
 
 void echoCount(uint16_t hashID, bool isACK);
@@ -249,19 +258,33 @@ uint32_t cntErrPRESTALL = 0;
 uint32_t cntErrLOSTSYNC = 0;
 uint32_t cntErrREEDSOLO = 0;
 uint32_t cntErrCRC16BAD = 0;
+uint32_t cntErrMISSCHAN = 0;
 
 // LBT COUNTERS
 uint32_t cntCChBusy = 0;
 uint32_t cntCChFree = 0;
 uint32_t cntDChBusy = 0;
 uint32_t cntDChFree = 0;
+uint32_t cntLBTHits = 0;  // counts consecutive LBT hits
 
+uint32_t cntErrTXJAMMED = 0;
+
+// Time tracking
+timeTrack TTRK[TIMETRACK_PERIODS] = { 0 };
+evCntTrack ETRK[TIMETRACK_PERIODS] = { 0 };
+uint8_t ttCurPeriod = 0;
 
 // user-definable event handler callbacks
 // MSG rx handler
 bool (* onRxMSG)(uint8_t *, uint16_t, uint8_t, uint8_t, uint8_t) = builtinRxMSG;
 // ACK rx handler
 bool (* onRxACK)(uint16_t, uint8_t, uint8_t, uint8_t, uint8_t) = builtinRxACK;
+// Rx error handler
+bool (* onRxERR)(uint16_t) = builtinRxERR;
+// MSG Tx handler
+bool (* onTxMSG)(uint16_t) = builtinTxMsgOK;
+// ACK Tx handler
+bool (* onTxACK)(uint16_t) = builtinTxAckOK;
 
 
 // additive CRC16 function
@@ -336,6 +359,38 @@ void dumpRegisters(int logLevel)
 }
 
 
+// Reset all counters
+void gtmlabResetCounts()
+{
+  cntRxPktSYNC = cntRxPktDATA = cntRxPktACK = cntRxPktTIME = 0;
+  cntTxPktSYNC = cntTxPktDATA = cntTxPktACK = cntTxPktTIME = 0;
+  cntRxDataObjTot = cntRxDataObjUni = cntRxPktACK = cntRxPktACKUni = 0;
+  cntTxDataObjTot = cntTxDataObjRel = cntTxPktACK = cntTxPktACKRel = 0;
+  cntErrPRESTALL = cntErrPKTSTALL = cntErrLOSTSYNC = cntErrREEDSOLO = cntErrCRC16BAD = cntErrMISSCHAN = 0;
+  cntCChFree = cntCChBusy = cntDChFree = cntDChBusy = cntErrTXJAMMED = 0;
+}
+
+
+// Get current period for time tracking
+uint32_t ttGetPeriod()
+{
+  uint32_t tPeriod = int(millis()/TIMETRACK_MILLIS) % TIMETRACK_PERIODS;
+  if (tPeriod != ttCurPeriod) {
+    LOGI("TTRK period: %d", tPeriod);
+    memset(&TTRK[tPeriod], 0, sizeof(timeTrack));
+    ttCurPeriod = tPeriod;
+  }
+  return tPeriod;
+}
+
+
+unsigned long ttPeriodTime()
+{
+  ttGetPeriod();  // update to be sure
+  return millis() - (int(millis()/TIMETRACK_MILLIS) * TIMETRACK_MILLIS);
+}
+
+
 // Look up a hash in one of the hash ringbuffers
 bool inRingBuf(uint16_t needle, uint16_t *haystack)
 {
@@ -344,6 +399,22 @@ bool inRingBuf(uint16_t needle, uint16_t *haystack)
       return true;
   }
   return false;
+}
+
+
+// Query current radio frequency by reading REG_FRF_* registers directly
+// (never needed outside of desperate debug scenarios)
+unsigned long getFrequency()
+{
+  unsigned long frf = 0;
+  // officially we should read 24 bits, multiply by 32e6 and divide by 2^19
+  // to avoid an integer capacity overrun, simplify this by treating 32 as 2^5,
+  // and subtracting the left shift from the right shift
+  frf += (1000000 * LoRa.readRegister(REG_FRF_MSB)) << 2;   // 2^16 * 2^5 / 2^19
+  frf += (1000000 * LoRa.readRegister(REG_FRF_MID)) >> 6;   //  2^8 * 2^5 / 2^19
+  frf += (1000000 * LoRa.readRegister(REG_FRF_LSB)) >> 14;  //  2^0 * 2^5 / 2^19
+
+  return (frf);
 }
 
 
@@ -408,7 +479,7 @@ void setCtrlChan()
 
 // Find a free channel to transmit
 // Tune to one or more random channels, listen for a few millis (LBT_SILENCE), and if
-//  RSSI is below silence floor (SILENCE_DBI), return true - "clear to transmit"
+//  RSSI is below silence floor (lbtThreDBm), return true - "clear to transmit"
 // Will populate the global variables currDChIdx and currCChIdx with the indexes of
 //   the tested channels, both in case of success or failure (this will allow the main
 //   loop to pick up a potential incoming transmission without delay)
@@ -436,10 +507,11 @@ bool findClearChan(uint8_t needData)
       for (int j = 0; j < round(LBT_SILENCE/regRSSI_TS); j++) {
         delay(regRSSI_TS);  // ms
         tmpRSSI = LoRa.readRegister(REG_RSSI_VALUE);
-        if (tmpRSSI < (SILENCE_DBI<<1)) {
+        if (tmpRSSI < (lbtThreDBm<<1)) {
           LOGI("LBT DCh %02d(%02d) RSSI=-%d", (currDChIdx + i) % curRegSet->dChanNum,
               currChan, tmpRSSI>>1);
           cntDChBusy++;
+          cntLBTHits++;
           // Before returning, hop back to original control chan to avoid a deadlock
           setCtrlChanX(currCChIdx);
           return false;
@@ -457,13 +529,15 @@ bool findClearChan(uint8_t needData)
   for (int j = 0; j < round(LBT_SILENCE/regRSSI_TS); j++) {
     delay(regRSSI_TS);  // ms
     tmpRSSI = LoRa.readRegister(REG_RSSI_VALUE);
-    if (tmpRSSI < (SILENCE_DBI<<1)) {
+    if (tmpRSSI < (lbtThreDBm<<1)) {
       LOGI("LBT CCh %02d(%02d) RSSI=-%d", currCChIdx, currChan, tmpRSSI>>1);
       cntCChBusy++;
+      cntLBTHits++;
       return false;
     }
   }
   cntCChFree++;
+  cntLBTHits = 0;
   return true;
 }
 
@@ -526,31 +600,51 @@ void resetState(bool dirty)
 }
 
 
-// Call from Arduino setup() to initialize radio and data structures
-void gtmlabInit()
+// Check (from Arduino loop) if gtm main loop is in a busy state and
+//  would prefer to not be held up by a lengthy non-gtm task
+bool gtmlabBusy()
 {
-#ifdef PIN_SCLK
-  // radio sits on a non-default SPI
-  SPI.begin(PIN_SCLK, PIN_MISO, PIN_MOSI);
-#endif
+  // use existing state flags for now
+  if ((scanning || holdchan) && !recvData && !inTXmode) {   // no operation in progress
+    return false;
+  }
 
+  return true;
+}
+
+
+// Check (e.g from Arduino loop) if tx queue contains any objects
+//   (which would be tx-ed on the next call to gtmTxTask)
+bool gtmlabTxEmpty()
+{
+  if (msgQueue[msgQTail].curTTL > 0)
+    return false;
+
+  if (ackQueue[ackQTail].curTTL > 0)
+    return false;
+
+  return true;
+}
+
+
+void gtmSetTxPower(uint8_t txPower)
+{
+  uint8_t oldMode = LoRa.readRegister(REG_OP_MODE);
+  // (required?) put radio in standby mode
+  LoRa.writeRegister(REG_OP_MODE, MODE_STDBY);
+
+  LoRa.setTxPower(txPower);
+  LoRa.writeRegister(REG_OP_MODE, oldMode);
+  gtmTxPower = txPower;
+}
+
+
+// Configure the radio to the GTM waveform
+// Will place AND LEAVE the radio in sleep mode
+//
+void setWaveform()
+{
   uint32_t bitdivisor = int(FXOSC/bitrate);
-
-  LOGI("Receiver startup: board=%d, region=%d", BOARD_TYPE, ISM_REGION);
-
-  // Configure the CS, reset, and IRQ pins
-  LoRa.setPins(pinCS, pinRST, pinIRQ);
-
-  if (!LoRa.begin(curRegSet->baseFreq)) {   // init radio at base frequency
-    LOGE("Radio init failed. Check board type and pin definitions");
-    while (true);
-  }
-
-  // Check radio version
-  if (LoRa.readRegister(REG_VERSION) != 0x12) {
-    LOGE("Unknown radio device");
-    while (true);
-  }
 
   // Set operating mode - sleep
   LoRa.writeRegister(REG_OP_MODE, MODE_SLEEP);
@@ -567,8 +661,10 @@ void gtmlabInit()
   // Set PA RAMP modulation shaping
   LoRa.writeRegister(REG_PA_RAMP, (uint8_t) 0x49);  // Gaussian BT=0.5
   
-  // Set filter bandwidth
-  LoRa.writeRegister(REG_RX_BW, 0x0c);  // 25.0 kHz (see table 38)
+  // Set filter bandwidth to 25.0 kHz
+  //   BwMant=01b, BwExp=4 -> 000 01 100
+  // (see table "Available RxBw Settings")
+  LoRa.writeRegister(REG_RX_BW, 0x0c);
 
   // Set preamble detection
   LoRa.writeRegister(REG_PREAMBLE_DETECT, 0xca); // 3 bytes preamble
@@ -576,7 +672,8 @@ void gtmlabInit()
   //LoRa.writeRegister(REG_PREAMBLE_DETECT, 0x8a); // 1 bytes preamble
 
   // Set RSSI smoothing (up to 32 samples from the default of 8)
-  LoRa.writeRegister(REG_RSSI_CONFIG, 0x04);
+  // TEMP DISABLED
+  //LoRa.writeRegister(REG_RSSI_CONFIG, 0x04);
 
   // Set Sync configuration
   LoRa.writeRegister(REG_SYNC_CONFIG, 0x51);  // not 81
@@ -596,9 +693,41 @@ void gtmlabInit()
 
   // RegPLL Hop - set fast hopping
   LoRa.writeRegister(REG_PLL_HOP, (0x2d | 0x80));
+}
+
+
+// Call from Arduino setup() to initialize radio and data structures
+void gtmlabInit()
+{
+#ifdef PIN_SCLK
+  // radio sits on a non-default SPI
+  SPI.begin(PIN_SCLK, PIN_MISO, PIN_MOSI);
+#endif
+
+  LOGI("Receiver startup: board=%d, region=%d", BOARD_TYPE, ISM_REGION);
+
+  // Configure the CS, reset, and IRQ pins
+  LoRa.setPins(pinCS, pinRST, pinIRQ);
+
+  if (!LoRa.begin(curRegSet->baseFreq)) {   // init radio at base frequency
+    LOGE("Radio init failed. Check board type and pin definitions");
+    while (true);
+  }
+
+  // Check radio version
+  if (LoRa.readRegister(REG_VERSION) != 0x12) {
+    LOGE("Unknown radio device");
+    while (true);
+  }
+
+  setWaveform();
+
+  // By default, thermal AutoImageCalOn bit is set (0x82 | 10000010)
+  //   do we want this disabled?
+  //LoRa.writeRegister(REG_IMAGE_CAL, 0x02);
 
   // Set Tx power
-  LoRa.setTxPower(DFLT_POWER);  // defined in gtmConfig.h
+  gtmSetTxPower(DFLT_POWER);  // defined in gtmConfig.h
 
   // Start RX mode
   LoRa.writeRegister(REG_OP_MODE, MODE_RX_CONTINUOUS);
@@ -614,8 +743,23 @@ void gtmlabInit()
 }
 
 
-// Call from Arduino loop to perform receiving tasks
+// Call from Arduino loop to perform RX and TX tasks
 void gtmlabLoop()
+{
+  gtmlabRxTask();
+
+  if (scanning && !recvData) {   // no operation in progress
+    // Check and perform one TX task
+    if (gtmlabTxTask()) {
+      // something was transmitted
+    }
+  }
+}
+
+
+// called from main loop to check radio and perform RX tasks
+// TIMING: <3ms when log=W and output disabled (due to serial bottleneck)
+bool gtmlabRxTask()
 {
   char rx_byte = 0;
   bool payReady = false;
@@ -690,13 +834,19 @@ void gtmlabLoop()
               pktRSSI>>1, (millis()-pktStart));
         cntErrLOSTSYNC++;
 
+        // invoke external handler
+        unsigned long t0 = millis();  // track time spent in handler
+        if ((* onRxERR) != nullptr)
+          onRxERR(RXERR_LOSTSYNC);
+        TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
+
         // From practical observations, LOSTSYNC on a control chan
         //   usually indicates a bad "packet size" byte, which is 
         //   a hard one to recover from.
         // Abandon this packet and get ready for next one ASAP
         if ((!recvData) && radioBuf[0] > 16) {  // normal size=15
           resetState(true);
-          return;  // BAILOUT
+          return false;  // BAILOUT
         }
       }
     }
@@ -715,15 +865,16 @@ void gtmlabLoop()
       for (int i=0; i<FIFOTHRE; i++) {
         radioBuf[radioLen++] = LoRa.readRegister(REG_FIFO);
       }
-    } else {  // not FIFOEMPTY
-      // FIFO below threshold, read one-by-one until FIFOEMPTY
-      while (!((curr_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2)) & 0x40)) {
-        radioBuf[radioLen++] = LoRa.readRegister(REG_FIFO);
+    }
+    // Any more data left to read? Keep reading and find out!
 
-        // keep watch for PAYREADY signaling at all times
-        if (curr_IRQ2 & 0x04) {
-          payReady = true;
-        }
+    // FIFO now below threshold, read one-by-one until FIFOEMPTY
+    while (!((curr_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2)) & 0x40)) {
+      radioBuf[radioLen++] = LoRa.readRegister(REG_FIFO);
+
+      // keep watch for PAYREADY signaling at all times
+      if (curr_IRQ2 & 0x04) {
+        payReady = true;
       }
     }    
     prev_IRQ2=curr_IRQ2;
@@ -744,15 +895,43 @@ void gtmlabLoop()
         if (rs.Decode(radioBuf, radioDec) == 0) {
           LOGD("REEDSOLO");
           // Packet OK, send it for further processing
+          TTRK[ttGetPeriod()].timeRX += (millis() - pktStart);
           rxPacket(radioDec, radioLen-8, pktRSSI>>1);
 
           // not really needed, but helps with debugging
           memset(radioBuf, 0, sizeof(radioBuf));
+
+        } else if (radioLen != (radioBuf[0]+1)) {
+          // Reed-Solomon can't fix a packet of incorrect length, but may be able
+          //  to fix a packet with CORRECT length and 1-2 corrupt bytes at the end
+          // So, if the received length is a little less than expected (based on
+          //  byte 0 of a GTM packet), we can try to lie about the length (this
+          //  will pad the packet with garbage) and hope reedsolo fixes it for us
+
+          LOGW("FIX BUF SIZE: %d->%d", radioLen, radioBuf[0]+1);
+          radioLen = radioBuf[0]+1;
+          rs.begin(radioLen, 1);
+          if (rs.Decode(radioBuf, radioDec) == 0) {
+            LOGI("REEDSOLO-FIX!");  // GREAT SUCCESS!
+            // Packet OK, send it for further processing
+            TTRK[ttGetPeriod()].timeRX += (millis() - pktStart);
+            rxPacket(radioDec, radioLen-8, pktRSSI>>1);
+            // not really needed, but helps with debugging
+            memset(radioBuf, 0, sizeof(radioBuf));
+          }
+
         } else {
           LOGI("REEDSOLO FAIL %cCh=%02d, len=%d, RSSI=-%d", 
                 holdchan ? '*' : (recvData ? 'D':'C'), 
                 currChan, radioLen, pktRSSI>>1);
           cntErrREEDSOLO++;
+
+          // invoke external handler
+          unsigned long t0 = millis();  // track time spent in handler
+          if ((* onRxERR) != nullptr)
+            onRxERR(RXERR_REEDSOLO);
+          TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
+
           resetState(true);
         }
       } else {
@@ -763,7 +942,7 @@ void gtmlabLoop()
       // Finished processing a radio packet, clean up a bit
       pktStart = 0;  // no packet being received right now
       radioLen = 0;
-      return;
+      return true;
     }  // if payReady
   }
 
@@ -779,8 +958,15 @@ void gtmlabLoop()
           currChan,
           pktRSSI>>1, millis()-chanTimer);
     cntErrPRESTALL++;
+
+    // invoke external handler
+    unsigned long t0 = millis();  // track time spent in handler
+    if ((* onRxERR) != nullptr)
+      onRxERR(RXERR_PRESTALL);
+    TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
+
     resetState(true);   // BAILOUT
-    return;
+    return false;
   }
 
   // flexible packet timeout: if in verbose mode, allow
@@ -799,37 +985,41 @@ void gtmlabLoop()
           radioLen-1, radioBuf[0], 
           pktRSSI>>1, millis()-pktStart);
     cntErrPKTSTALL++;
+
+    // invoke external handler
+    unsigned long t0 = millis();  // track time spent in handler
+    if ((* onRxERR) != nullptr)
+      onRxERR(RXERR_PKTSTALL);
+    TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
+
     resetState(true);  // dirty
-    return;
+    return false;
   }
 
   if (scanning && !recvData) {   // no operation in progress
-
-    // Check and perform one TX task
-    if (txTask()) {
-      // something was transmitted, radio has been reset, exit to re-enter
-      return;
-    }
-
     // if scanning, HOP to next ctrl chan every SCAN_DWELL millis
     if (((millis()-lastHop) > SCAN_DWELL) && !holdchan) {
       setCtrlChan();
       lastHop = millis();
     }
   }
+
+  return true;
 }
 
 
 // called from main loop to check for TX tasks and execute the first in queue
-bool txTask()
+// TIMING: <230ms when log=W and output disabled (due to serial bottleneck)
+bool gtmlabTxTask()
 {
     bool txHold = false;  // hold the transmission of current object (INERTIA)
     bool txLocal = true;  // the message is originated locally
+    int txRes = -1;  // TX Result
 
     if (txBackOff > millis())
       txHold = true;    // Hold TX if backoff engaged
 
-    unsigned long tStartLBT = millis();
+    unsigned long tStart = millis();
 
     // Quick notes on INERTIA feature:
     // When relaying a received object, all nodes on the network would normally
@@ -856,25 +1046,42 @@ bool txTask()
         // how many data channels? as many as the number of fragments!
         uint8_t nFrags = ceil(1.0 * msgQueue[msgQTail].msgLen / TXFRAGSIZE);
         if (findClearChan(nFrags)) {
-          LOGI("LBT(%dms) OK, can TX %s MSG(pos:%d)", (millis() - tStartLBT),
-                txLocal ? "LOC":"RLY", msgQTail);
+          TTRK[ttGetPeriod()].timeLBT += (millis() - tStart);
+          LOGI("LBT(%dms) OK, can TX %s MSG(pos:%d)", (millis() - tStart),
+                txLocal ? "OWN":"RLY", msgQTail);
+          tStart = millis();
           txStart();
-          txSendMsg(msgQueue[msgQTail].msgObj, msgQueue[msgQTail].msgLen,
-                    msgQueue[msgQTail].iniTTL, msgQueue[msgQTail].curTTL);
+          txRes = txSendMsg(msgQueue[msgQTail].msgObj, msgQueue[msgQTail].msgLen,
+                            msgQueue[msgQTail].iniTTL, msgQueue[msgQTail].curTTL);
+          TTRK[ttGetPeriod()].timeTX += (millis() - tStart);
+
+          // record the time
+          lastRadioTx = millis();
+
+          // advance the queue
           memset(&(msgQueue[msgQTail]), 0, sizeof(struct msgDesc));
           msgQTail = (msgQTail+1) % MSG_QUEUE_SIZE;
           resetState(false);
+
+          if(txLocal && (txRes > 0)) {
+            unsigned long t0 = millis();  // track time spent in handler
+            if (! onTxMSG(txRes)) {
+              LOGD("onTxMSG handler failed");
+            }
+            TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
+          }
           return true;
         } else {
+          TTRK[ttGetPeriod()].timeLBT += (millis() - tStart);
           int txBack = random(txBackMAX);
           txBackOff = millis() + txBack;
-          LOGI("LBT(%dms) SKIPPED TX MSG(pos:%d) backoff=%d", (millis() - tStartLBT),
+          LOGI("LBT(%dms) SKIPPED TX MSG(pos:%d) backoff=%d", (millis() - tStart),
                 msgQTail, txBack);
         }
       }
 
     } else if (ackQueue[ackQTail].curTTL > 0) {
-      if (ackQueue[ackQTail].iniTTL == ackQueue[ackQTail].curTTL) {
+      if (ackQueue[ackQTail].iniTTL != ackQueue[ackQTail].curTTL) {
         // curTTL == iniTTL indicates a locally originated object (not relayed)
         txLocal = false;
         if (millis() - ackQueue[ackQTail].tStamp < txInertia) {
@@ -883,22 +1090,51 @@ bool txTask()
       }
       if (! txHold) {
         if (findClearChan(0)) {  // dataChans = 0 = none required
-          LOGI("LBT(%dms) OK, can TX %s ACK(pos:%d)", (millis() - tStartLBT),
-                txLocal ? "LOC":"RLY", ackQTail);
+          TTRK[ttGetPeriod()].timeLBT += (millis() - tStart);
+          LOGI("LBT(%dms) OK, can TX %s ACK(pos:%d)", (millis() - tStart),
+                txLocal ? "OWN":"RLY", ackQTail);
+          tStart = millis();
           txStart();
           txSendAck(ackQueue[ackQTail].hashID, ackQueue[ackQTail].hops,
                     ackQueue[ackQTail].iniTTL, ackQueue[ackQTail].curTTL);
+          TTRK[ttGetPeriod()].timeTX += (millis() - tStart);
+
+          // record the time
+          lastRadioTx = millis();
+
+          // advance the queue
+          uint16_t tHash = ackQueue[ackQTail].hashID;
           memset(&(ackQueue[ackQTail]), 0, sizeof(struct ackDesc));
           ackQTail = (ackQTail+1) % ACK_QUEUE_SIZE;
           resetState(false);
+
+          if(txLocal) {
+            unsigned long t0 = millis();  // track time spent in handler
+            if (! onTxACK(tHash)) {
+              LOGD("onTxACK handler failed");
+            }
+            TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
+          }
           return true;
         } else {
+          TTRK[ttGetPeriod()].timeLBT += (millis() - tStart);
           int txBack = random(txBackMAX);
           txBackOff = millis() + txBack;
-          LOGI("LBT(%dms) SKIPPED TX ACK(pos:%d) backoff=%d", (millis() - tStartLBT),
+          LOGI("LBT(%dms) SKIPPED TX ACK(pos:%d) backoff=%d", (millis() - tStart),
                 ackQTail, txBack);
         }
       }
+    }
+
+    // Excessive number of consecutive LBT hits?
+    if (cntLBTHits > LBT_MAX_HITS) {
+      cntErrTXJAMMED++;
+      LOGW("LBT HITS: %d, reset RX", cntLBTHits);
+      cntLBTHits = 0;
+      // Our RSSI detector may be jammed, try to un-jam it
+      // Flicking the radio to standby and back usually fixes the problem
+      // FIXME quick hack
+      gtmSetTxPower(gtmTxPower);
     }
     return false;  // nothing was sent
 }
@@ -908,10 +1144,8 @@ bool txTask()
 //   (uRSSI = unsigned RSSI)
 int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
 {
-  // this is redundant
-  // HEXV(TAG, rxBuf, rxLen);
-
   uint16_t msgH16;
+  bool isUnique = true;  // first time we see this object
 
   uint16_t crc_want = (rxBuf[rxLen-2]<<8) + rxBuf[rxLen-1];
   uint16_t crc_calc=0;
@@ -925,11 +1159,21 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
   } else {
     LOGI("CRC16BAD want:%04x, got:%04x", crc_want, crc_calc);
     cntErrCRC16BAD++;
+
+    // invoke external handler
+    unsigned long t0 = millis();  // track time spent in handler
+    if ((* onRxERR) != nullptr)
+      onRxERR(RXERR_CRC16BAD);
+    TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
+
     return 0;
   }
 
   // good packet; drop the CRC
   rxLen-=2;
+
+  // record the time
+  lastRadioRx = millis();
 
   // formatted channel information for debug output
   // DCh = data, CCh = ctrl, *Ch = user entered
@@ -978,6 +1222,7 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
     echoCount(msgH16, true);  // count an ACK
 
     if (inRingBuf(msgH16, rxAckBuf)) {
+      isUnique = false;
       LOGI("ACK SEEN BEFORE");
     } else {
       cntRxPktACKUni++;
@@ -993,24 +1238,33 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
         LOGI("ACK without MSG");        
       }
 
-      // if first seen, and curTTL>1, it's a relayable ACK
-      if (rxBuf[5]>1) {
-        ////////// RELAYING //////////
-        LOGI("RELAYACK (%s)", (relaying ? "ON!":"OFF"));
-        if (relaying) {
-          // decrement curTTL and enqueue for TX
-          // FIXME catch error
-          txEnQueueACK(msgH16, (rxBuf[4]>>4), (rxBuf[4] & 0x0f), (rxBuf[5]-1));
-          cntTxPktACKRel++;
+      // Is this an echo of an ACK that we sent?
+      if (inRingBuf(msgH16, txAckBuf)) {
+        LOGI("ACK SENT BEFORE");
+      } else {
+        // if first seen, and curTTL>1, it's a relayable ACK
+        if (rxBuf[5]>1) {
+          ////////// RELAYING //////////
+          LOGI("RELAYACK (%s)", (relaying ? "ON!":"OFF"));
+          if (relaying) {
+            // decrement curTTL and enqueue for TX
+            // FIXME catch error
+            txEnQueueACK(msgH16, (rxBuf[4]>>4), (rxBuf[4] & 0x0f), (rxBuf[5]-1));
+            cntTxPktACKRel++;
+          }
         }
       }
+    }
 
+    if (isUnique || noDeDup) {
       // new ACK received - call external handler if defined
+      unsigned long t0 = millis();  // track time spent in handler
       if ((* onRxACK) != nullptr) {
         if (! onRxACK(msgH16, (rxBuf[4]>>4), (rxBuf[4] & 0x0f), rxBuf[5], pktRSSI)) {
-          LOGD("ACK handler failed");
+          LOGD("onRxACK handler failed");
         }
       }
+      TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
     }
     resetState();
 
@@ -1018,6 +1272,21 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
     // DATA packet, a fragment of a protocol message of random length
     LOGI("%s DATA(2): len=%d, fragIDX=%d", chanDesc, rxBuf[2], rxBuf[3]);
     cntRxPktDATA++;
+
+    if (!recvData) {
+      // TROUBLE! received DATA packet on CTRL channel, this is never good
+      LOGW("MISSCHAN, f=%d", getFrequency());
+      cntErrMISSCHAN++;
+
+      // invoke external handler
+      unsigned long t0 = millis();  // track time spent in handler
+      if ((* onRxERR) != nullptr)
+        onRxERR(RXERR_MISSCHAN);
+      TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
+
+      resetState(true);
+      return 0;
+    }
 
     memcpy((packetBuf+packetLen), (rxBuf+4), rxBuf[2]);
     packetLen += rxBuf[2];
@@ -1044,18 +1313,11 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
 
       if (inRingBuf(msgH16, rxMsgBuf)) {
         LOGI("MSG SEEN BEFORE");
+        isUnique = false;
       } else {
         cntRxDataObjUni++;
         rxMsgBuf[rxMsgPos++] = msgH16;
         rxMsgPos %= HASH_BUF_LEN;
-
-        // New message received - call external handler if defined
-        if ((* onRxMSG) != nullptr) {
-          if (! onRxMSG(packetBuf, packetLen, lastIniTTL, lastCurTTL, 
-                        int(sumDChRSSI/(double)dataFrags))) {
-            LOGD("MSG handler failed");
-          }
-        }
 
         // Is this an echo of a message that we sent?
         if (inRingBuf(msgH16, txMsgBuf)) {
@@ -1074,6 +1336,19 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
           }
         }
       }
+
+      if (isUnique || noDeDup) {
+        // New message received - call external handler if defined
+        unsigned long t0 = millis();  // track time spent in handler
+        if ((* onRxMSG) != nullptr) {
+          if (! onRxMSG(packetBuf, packetLen, lastIniTTL, lastCurTTL, 
+                        int(sumDChRSSI/(double)dataFrags))) {
+            LOGD("onRxMSG handler failed");
+          }
+        }
+        TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
+      }
+
       packetLen=0;
       // will reset buffers, hop to cch and start scanning
       resetState();
@@ -1089,12 +1364,14 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
 // (uRSSI because the RSSI is unsigned)
 bool builtinRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI)
 {
-  // output in standardized format (inittl, curttl, uRSSI, | ,hexmsg)
-  printf("RX_MSG:");
-  printf("%02x%02x%02x|", iniTTL, curTTL, uRSSI);
-  for (int i=0; i<mLen; i++)
-    printf("%02x", mBuf[i]);
-  printf("\n");
+  if (ezOutput) {  // easy output enabled
+    // output in standardized format (inittl, curttl, uRSSI, | ,hexmsg)
+    printf("RX_MSG:");
+    printf("%02x%02x%02x|", iniTTL, curTTL, uRSSI);
+    for (int i=0; i<mLen; i++)
+      printf("%02x", mBuf[i]);
+    printf("\n");
+  }
   return true;
 }
 
@@ -1102,9 +1379,38 @@ bool builtinRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL,
 // simple builtin ACK handler - hexlified output
 bool builtinRxACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI)
 {
-  // output in standardized format
-  printf("RX_ACK:%04x%02x%02x%02x\n", hashID, ((hops & 0x0f)<<4) | (iniTTL & 0x0f), curTTL, uRSSI);
+  if (ezOutput)  // easy output enabled
+    // output in standardized format
+    printf("RX_ACK:%04x%02x%02x%02x\n", hashID, ((hops & 0x0f)<<4) | (iniTTL & 0x0f), curTTL, uRSSI);
   return true;  
+}
+
+
+// simple builtin RX Error handler
+bool builtinRxERR(uint16_t error)
+{
+  // do nothing
+  return true;
+}
+
+
+// simple builtin TX MSG succcess handler - output is hex HashID of message
+bool builtinTxMsgOK(uint16_t hashID)
+{
+  if (ezOutput)  // easy output enabled
+    // output in standardized format
+    printf("TX_MSG:%04x\n", hashID);
+  return true;
+}
+
+
+// simple builtin TX ACK succcess handler - output is hex HashID
+bool builtinTxAckOK(uint16_t hashID)
+{
+  if (ezOutput)  // easy output enabled
+    // output in standardized format
+    printf("TX_ACK:%04x\n", hashID);
+  return true;
 }
 
 
@@ -1287,6 +1593,10 @@ int txSendAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
         currChan, hashID, hops, iniTTL, curTTL);
   txEncodeAndSend(mBuf, 4, PKT_TYPE_ACK);
   cntTxPktACK++;
+
+  // save to ringbuffer
+  txAckBuf[txAckPos++] = hashID;
+  txAckPos %= HASH_BUF_LEN;
 }
 
 
@@ -1313,7 +1623,7 @@ int txSendTime(uint64_t time32)
 // Send a message
 // This is a complex action involving several packets
 // - will set channel using the values provided in currCChIdx and currDChIdx
-// - expects TX mode on)
+// - expects TX mode on, and will leave it unchanged
 int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
 {
   uint8_t oBuf[128];   // output buffer
@@ -1375,6 +1685,7 @@ int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
     delay(txPackDelay);  // wait for others
   }
   cntTxDataObjTot++;
+  return msgH16;
 }
 
 
@@ -1399,7 +1710,7 @@ bool txEnQueueMSG(uint8_t * msgObj, uint16_t msgLen, uint8_t iniTTL, uint8_t cur
 // Queue an ACK for sending (when channel is clear)
 bool txEnQueueACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
 {
-  if (msgQueue[msgQHead].curTTL>0) {
+  if (ackQueue[ackQHead].curTTL>0) {
     // buffer is full, retry later
     return false;
   }
@@ -1436,6 +1747,12 @@ struct echoDesc {
 echoDesc Echoes[ECHOSIMTRACK * 2] = {0};
 uint8_t echoHead[2] = {0};
 
+// make some of these variables externally available
+uint8_t echoCur = 0;
+uint16_t echoAvg = 0;  // x100
+char echoFmt[33] = {0};  // formatted
+
+
 void echoCount(uint16_t hashID, bool isACK)
 {
   uint8_t hx = 0;  // which dataset, MSG or ACK
@@ -1451,8 +1768,6 @@ void echoCount(uint16_t hashID, bool isACK)
     if (e[i].hashID == hashID) {
       found = true;
       e[i].count++;
-      //LOGI("ECHO(%s:%04x)=%d t=%d", isACK ? "ACK":"MSG", hashID,
-      //      e[i].count, millis() - e[i].tStamp);
       break;
     }
   }
@@ -1482,8 +1797,14 @@ void echoCount(uint16_t hashID, bool isACK)
     pos += sprintf(formatted + pos, "%d ", e[(ECHOSIMTRACK+i-j) % ECHOSIMTRACK].count);
   }
   if (cnt) {
+    if (! isACK) {
+      // copy to extern variables
+      echoAvg = 100 * sum / cnt;
+      echoCur = e[i].count;
+      strncpy(echoFmt, formatted, 32);
+    }
     LOGI("ECHO(%s:%04x)=%d t=%d AVG=%02.2f [ %s]", isACK ? "ACK":"MSG", hashID,
-            e[i].count, millis() - e[i].tStamp, 1.0 * sum / cnt, formatted);
+         e[i].count, millis() - e[i].tStamp, 1.0 * sum / cnt, formatted);
   }
   return;
 }
