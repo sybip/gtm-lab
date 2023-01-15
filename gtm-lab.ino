@@ -16,8 +16,7 @@ uint16_t conLen=0;
 //  send commands received via usb serial, and stuff happens
 void playInit();
 void playLoop();
-
-int conExec(char *conBuf, uint16_t conLen);
+int playExec(char *conBuf, uint16_t conLen);
 
 
 void setup()
@@ -50,7 +49,7 @@ void loop()
     char conOne = Serial.read();
     if ((conOne == '\n') || (conLen>=(sizeof(conBuf)))){
       conBuf[conLen++] = 0;
-      conExec(conBuf, conLen-1);  // in playHarder.cpp
+      playExec(conBuf, conLen-1);  // in playHarder.cpp
       conLen = 0;
     } else {
       conBuf[conLen++] = conOne;

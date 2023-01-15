@@ -51,6 +51,11 @@
 #define REG_RSSI_CONFIG          0x0e
 #define REG_RSSI_VALUE           0x11
 #define REG_RX_BW                0x12
+#define REG_AFC_BW               0x13
+#define REG_FSK_AFC_MSB          0x1b
+#define REG_FSK_AFC_LSB          0x1c
+#define REG_FSK_FEI_MSB          0x1d
+#define REG_FSK_FEI_LSB          0x1e
 #define REG_PREAMBLE_DETECT      0x1f
 #define REG_FSK_PREAMBLE_MSB     0x25
 #define REG_FSK_PREAMBLE_LSB     0x26

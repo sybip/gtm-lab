@@ -153,6 +153,11 @@ bool scanning = true;
 bool holdchan = false;  // if true, stay on this chan
 bool inTXmode = false;
 bool recvData = false;  // if true, we are on a data chan
+
+bool softAFC = true;    // enable software AFC
+uint16_t feiThre = 32;  // apply correction only if FEI outside this threshold
+uint16_t currFei = 0;   // current FEI reading
+
 uint8_t currChan = 0;   // current channel NUMBER
 uint8_t currDChIdx = 0; // current data chan INDEX in map
 uint8_t currCChIdx = 0; // current ctrl chan INDEX in map
@@ -167,6 +172,8 @@ esp_log_level_t logLevel = VERBOSITY;  // in case we want to query it
 
 // Timing related variables
 unsigned long pktStart = 0;   // millis when packet RX started (preamble detected)
+unsigned long feiStart = 0;   // micros when FEI measurement started
+unsigned long rssiStart = 0;  // millis when RSSI measurement started
 unsigned long dataStart = 0;  // millis when data RX started
 unsigned long lastHop = 0;    // millis when we last hopped ctrl chan
 unsigned long chanTimer = 0;  // millis when we entered current channel
@@ -566,6 +573,8 @@ void resetState(bool dirty)
   inTXmode = false;   // we're not in a transmission
   recvData = false;   // we're not receiving data
   pktStart = 0;   // we're not receiving a packet
+  feiStart = 0;   // we're not measuring FEI
+  currFei = 0;
 
   // reset TX inertia value
   // currently we use pure randomness, however this could be
@@ -581,6 +590,12 @@ void resetState(bool dirty)
   // reset IRQ1 PREAMBLE AND SYNCWORD bits (by writing 1 to them)
   LoRa.writeRegister(REG_IRQ_FLAGS_1, 0x03);
   prev_IRQ1 = LoRa.readRegister(REG_IRQ_FLAGS_1);
+
+  if (softAFC) {
+    // reset frequency correction registers
+    LoRa.writeRegister(REG_FSK_AFC_MSB, 0);
+    LoRa.writeRegister(REG_FSK_AFC_LSB, 0);
+  }
 
   // reset the radio's FIFO
   while (!((prev_IRQ2 = LoRa.readRegister(REG_IRQ_FLAGS_2)) & 0x40))
@@ -671,8 +686,8 @@ void setWaveform()
   //LoRa.writeRegister(REG_PREAMBLE_DETECT, 0xaa); // 2 bytes preamble
   //LoRa.writeRegister(REG_PREAMBLE_DETECT, 0x8a); // 1 bytes preamble
 
-  // Set RSSI smoothing (up to 32 samples from the default of 8)
-  // TEMP DISABLED
+  // Set RSSI smoothing (up to 32 samples (2dB accuracy) from default 8 (4dB))
+  // TEMP DISABLED as usefulness is unclear; !ws0e04 to test
   //LoRa.writeRegister(REG_RSSI_CONFIG, 0x04);
 
   // Set Sync configuration
@@ -786,12 +801,17 @@ bool gtmlabRxTask()
     if (((prev_IRQ1 & 0x02)!=0x02) && ((curr_IRQ1 & 0x02)==0x02)) {
       // PREAMBLE bit rising
       LOGD("PREAMBLE (t=0)");
-      pktStart=millis();
+      pktStart = millis();
+      rssiStart = millis();  // start timer for RSSI reading
+      pktRSSI = 0;
       pktLoops = 0;    // 20210303 PKTLOOPS
       scanning = false;
       if (!recvData) {
         // record "last preamble detected" for control channel
         lastCChAct[currCChIdx] = millis();
+        // We are on a control (long preamble) channel, start FEI measurement
+        feiStart = micros();  // warning, using micros rather than millis
+        currFei = 0;
       }
     }
 
@@ -800,8 +820,12 @@ bool gtmlabRxTask()
       if (! pktStart) {
         // missed the preamble, but it's OK, start the timer now
         pktStart=millis();
+        rssiStart = millis();  // start timer for RSSI reading
+        pktRSSI = 0;
         pktLoops = 0;    // 20210303 PKTLOOPS
       }
+      // if any FEI measurement in progress, stop it now - it's too late
+      feiStart = 0;
       LOGD("PRE+SYNW (t=%d)", (millis()-pktStart));
       radioLen = 0;
       memset(radioBuf, 0, 256);
@@ -856,6 +880,52 @@ bool gtmlabRxTask()
     prev_IRQ2=curr_IRQ2;
   }
 
+  // Frequency corrections
+  // The radio will measure the frequency error and load it into the FEI registers
+  //  during preamble. The value becomes available "4 bit periods" from preamble
+  //  detection, and is updated automatically
+  // We measure and correct on the (long) preamble of the control packet of each
+  //  received object, retain the setting for any subsequent data packets, and 
+  //  reset the correction after the full object is received
+  // The assumption is that the Tx frequency error is variable between nodes, but
+  //  constant (in the short term) between packets from the same node
+  //
+  // FIXME: in production, this can and SHOULD be offloaded to the radio module
+  //  (after all, this is what the A in AFC is about), but during experiments we
+  //  prefer to be able to read and set it manually, for the cost of some CPU time
+  //
+  // Wait for 6 (more than 4) bit periods at 24kbps rate: 6 / 24000 = 0.25ms
+  //  and also use a millis-based cutoff, for safety in case of micros rollover
+  #define FEI_PERIOD_US 250    // wait for 250us from preamble detection...
+  #define FEI_CUTOFF_MS 1      // ...or no more than 1 ms, which is a long time
+
+  if (feiStart)
+    if (((micros() - feiStart) > FEI_PERIOD_US) || ((millis() - pktStart) > FEI_CUTOFF_MS)) {
+    // FEI value must be ready by now
+    currFei = (LoRa.readRegister(REG_FSK_FEI_MSB) << 8) | LoRa.readRegister(REG_FSK_FEI_LSB);
+    feiStart = 0;  // done measuring
+    if (softAFC && (abs((int16_t) currFei) > feiThre)) {
+      LOGI("FEI=%d (%04x), AFC", (int16_t) currFei, currFei);
+      LoRa.writeRegister(REG_FSK_AFC_MSB, (currFei >> 8) & 0xff);
+      LoRa.writeRegister(REG_FSK_AFC_LSB, currFei & 0xff);
+      rssiStart = millis();  // RESTART timer for RSSI reading
+    } else {
+      LOGD("FEI=%d (%04x)", (int16_t) currFei, currFei);
+    }
+  }
+  // End of frequency corrections
+
+  // If RSSI ready to read, read it now
+  if (rssiStart && (millis() - rssiStart >= regRSSI_TS)) {
+      pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
+      rssiStart = 0;
+      // Sometimes this returns a zero value, for no clear reason
+      //   (possibly an AGC artifact?)
+      // Log it for reference, but there's not really much to do about it
+      if (!pktRSSI)
+        LOGI("GOT RSSI=0!");
+  }
+
   if(((curr_IRQ1 & 0x03)==0x03) && 
      ((curr_IRQ2 & 0x20) || !(curr_IRQ2 & 0x40))) {
     // if PREAMBLE|SYNCWORD are set, and (FIFOLEVEL or not FIFOEMPTY)
@@ -881,8 +951,12 @@ bool gtmlabRxTask()
 
     // check PAYLOAD_READY IRQ2 bit (read and saved above)
     if (payReady) {
-      // Read RSSI ASAP
-      pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
+      if (rssiStart) {
+        // If waiting for RSSI, read it ASAP
+        // FIXME check docs, it may be too late to read RSSI here
+        pktRSSI = LoRa.readRegister(REG_RSSI_VALUE);
+        rssiStart = 0;
+      }
 
       // 20210303 PKTLOOPS
       LOGD("rxLen=%d, RSSI=-%d (t=%d, loop=%d)", radioLen, (pktRSSI>>1), (millis()-pktStart), pktLoops);
@@ -941,6 +1015,7 @@ bool gtmlabRxTask()
 
       // Finished processing a radio packet, clean up a bit
       pktStart = 0;  // no packet being received right now
+      feiStart = 0;
       radioLen = 0;
       return true;
     }  // if payReady
@@ -1015,6 +1090,11 @@ bool gtmlabTxTask()
     bool txHold = false;  // hold the transmission of current object (INERTIA)
     bool txLocal = true;  // the message is originated locally
     int txRes = -1;  // TX Result
+
+    if (holdchan) {
+      // can't TX while holding chan
+      return false;
+    }
 
     if (txBackOff > millis())
       txHold = true;    // Hold TX if backoff engaged
@@ -1357,6 +1437,7 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
   } else {
     LOGI("%s UNK (%d)", chanDesc, rxBuf[1]);    
   }
+  return 0;
 }
 
 
@@ -1500,6 +1581,8 @@ int txPacket(uint8_t *txBuf, uint8_t txLen, bool isCtrl)
   // wait for PacketSent bit to confirm transmission complete
   while(!(LoRa.readRegister(REG_IRQ_FLAGS_2) & 0x08));
   LOGD("TX DONE, t=%dms", (millis() - txStart));
+
+  return 0;
 }
 
 
@@ -1553,7 +1636,7 @@ int txEncodeAndSend(uint8_t * pktBuf, uint8_t pktLen, uint8_t pktType)
   LOGV("AIR_SIZE: %d", pktLen + 8);
 
   // and finally transmit outbuf
-  txPacket(radioBuf, pktLen + 8, isCtrl);
+  return txPacket(radioBuf, pktLen + 8, isCtrl);
 }
 
 
@@ -1571,8 +1654,10 @@ int txSendSync(uint8_t chIDX, uint8_t frags, uint8_t iniTTL, uint8_t curTTL)
 
   LOGI("TX CCh=%02d SYNC(1): chIDX=%d, frags=%d, iniTTL=%d, curTTL=%d", 
         currChan, chIDX, frags, iniTTL, curTTL);
-  txEncodeAndSend(mBuf, 4, PKT_TYPE_SYNC);
+  int r = txEncodeAndSend(mBuf, 4, PKT_TYPE_SYNC);
   cntTxPktSYNC++;
+
+  return r;
 }
 
 
@@ -1591,12 +1676,14 @@ int txSendAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
 
   LOGI("TX CCh=%02d ACK (3): hash=0x%04x, hops=%d, iniTTL=%d, curTTL=%d", 
         currChan, hashID, hops, iniTTL, curTTL);
-  txEncodeAndSend(mBuf, 4, PKT_TYPE_ACK);
+  int r = txEncodeAndSend(mBuf, 4, PKT_TYPE_ACK);
   cntTxPktACK++;
 
   // save to ringbuffer
   txAckBuf[txAckPos++] = hashID;
   txAckPos %= HASH_BUF_LEN;
+
+  return r;
 }
 
 
@@ -1614,8 +1701,10 @@ int txSendTime(uint64_t time32)
   setChan(curRegSet->cChanMap[currCChIdx]); 
 
   LOGI("TX CCh=%02d TIME(0): 0x%08x", currChan, time32);
-  txEncodeAndSend(mBuf, 4, PKT_TYPE_TIME);
+  int r = txEncodeAndSend(mBuf, 4, PKT_TYPE_TIME);
   cntTxPktTIME++;
+
+  return r;
 }
 
 

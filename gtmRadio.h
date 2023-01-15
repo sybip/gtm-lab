@@ -107,6 +107,9 @@ extern bool scanning;
 extern bool holdchan;       // if true, stay on this chan
 extern bool inTXmode;
 extern bool recvData;       // if true, we are on a data chan
+
+extern bool softAFC;        // enable software AFC
+extern uint16_t feiThre;    // software AFC threshold
 extern uint8_t currChan;    // current channel NUMBER
 extern uint8_t currDChIdx;  // current data chan INDEX in map
 extern uint8_t currCChIdx;  // current ctrl chan INDEX in map

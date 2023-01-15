@@ -52,7 +52,7 @@ SFE_UBLOX_GNSS myGPS;
 #include "esp_system.h"
 #endif
 
-#define PLAY_VER 2022122201   // Playground version
+#define PLAY_VER 2023011101   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -79,7 +79,7 @@ char symbList[] = { '#', '=', '-', ' ' };
 
 // Assembles and sends a "shout" message with the supplied string as message body
 // (thanks to https://gitlab.com/almurphy for the Arduino implementation)
-int testShoutTx(char * msgBody, uint16_t msgLen, int argAppID=-1, bool compatGTA=true, bool direct=false)
+void testShoutTx(char * msgBody, uint16_t msgLen, int argAppID=-1, bool compatGTA=true, bool direct=false)
 {
   uint32_t time32 = now();
   uint8_t mData[300];  // message buffer (for a small message)
@@ -176,12 +176,11 @@ int testShoutTx(char * msgBody, uint16_t msgLen, int argAppID=-1, bool compatGTA
       LOGI("TX DROPPED (buffer full)");
     }
   }
-
 }
 
 
 // Generate a text of random size and send it as a "shout" message
-int testMessage(uint16_t msgLen)
+void testMessage(uint16_t msgLen)
 {
   if (msgLen == 0)
     msgLen = random(230);
@@ -226,7 +225,7 @@ uint8_t gpsDOP = 1;   // point dillution of precision
 uint8_t gpsFix = 1;   // gps fix type
 bool gpsAct = true;   // gps is ACTIVE
 
-int testTakPLI()
+void testTakPLI()
 {
   char gtmCoT[256] = {0};
   snprintf(gtmCoT, 200, "%s;%s;%s;%s;%.06f;%.06f;%.03f;%s;%d",
@@ -269,6 +268,7 @@ void gpsInit()
     myGPS.setUART1Output(COM_TYPE_UBX); //Set the UART port to output UBX only
     myGPS.setI2COutput(COM_TYPE_UBX);   //Set the I2C port to output UBX only (turn off NMEA noise)
     myGPS.powerSaveMode(false);
+    myGPS.setAutoPVT(true);  // make GPS non-blocking
   }
 }
 #endif  // HAS_UBXGPS
@@ -298,7 +298,7 @@ void playLoop()
 // executed for each line received on the serial console
 // - if first character is '!', treat the line as a command
 // - otherwise, transmit it in the body of a "shout" message
-int conExec(char *conBuf, uint16_t conLen)
+int playExec(char *conBuf, uint16_t conLen)
 {
   char hexBuf[3] = {0};
   uint8_t wReg = 0;
@@ -346,15 +346,15 @@ int conExec(char *conBuf, uint16_t conLen)
     } else if (conBuf[2] == '1') {
       LOGI("SETMODE: STDBY");
       LoRa.writeRegister(REG_OP_MODE, MODE_STDBY);
-      while (!(LoRa.readRegister(REG_IRQ_FLAGS_1) & 0x80)) { ; }      
+      while (!(LoRa.readRegister(REG_IRQ_FLAGS_1) & 0x80)) { ; }
     } else if (conBuf[2] == 'r') {
       LOGI("SETMODE: RX");
       LoRa.writeRegister(REG_OP_MODE, MODE_RX_CONTINUOUS);
-      while (!(LoRa.readRegister(REG_IRQ_FLAGS_1) & 0x80)) { ; }      
+      while (!(LoRa.readRegister(REG_IRQ_FLAGS_1) & 0x80)) { ; }
     } else if (conBuf[2] == 't') {
       LOGI("SETMODE: TX");
       LoRa.writeRegister(REG_OP_MODE, MODE_TX);
-      while (!(LoRa.readRegister(REG_IRQ_FLAGS_1) & 0x80)) { ; }      
+      while (!(LoRa.readRegister(REG_IRQ_FLAGS_1) & 0x80)) { ; }
     } else {
       LOGI("UNKMODE");      
     }
@@ -425,6 +425,28 @@ int conExec(char *conBuf, uint16_t conLen)
       }
       resetState();
 
+    } else if (conBuf[2] == 'f') {  // Frequency correction
+      switch(conBuf[3]) {
+        case 'a':                   // Software AFC on/off
+          if (conBuf[4] == '0') {
+            softAFC = false;
+          } else if (conBuf[4] == '1') {
+            softAFC = true;
+          }
+          LOGI("SOFT_AFC is now %s", (softAFC ? "ON":"OFF"));
+          break;
+        case 't':
+          memcpy(hexBuf, conBuf+4, 3);
+          uint16_t tFeiThre;
+          tFeiThre = strtoul(hexBuf, NULL, 10) & 0xffff;
+          if (tFeiThre)
+            feiThre = tFeiThre;
+          LOGI("FEI_THRE is now (+/-)%d", feiThre);
+          break;
+        default:
+          LOGW("NOT FOUND");
+      }
+
     } else if (conBuf[2] == 'p') {
       memcpy(hexBuf, conBuf+3, 2);
       uint8_t txPower = strtoul(hexBuf, NULL, 10) & 0xff;
@@ -489,10 +511,13 @@ int conExec(char *conBuf, uint16_t conLen)
             LOGI("SETCLOCK from GPS:");
             LOGI("OLD TIME: %04d-%02d-%02d %02d:%02d:%02d", 
                   year(), month(), day(), hour(), minute(), second());
+            myGPS.setAutoPVT(false);  // make GPS blocking
+            myGPS.getSecond();        // flush old data
             setTime(myGPS.getHour(), myGPS.getMinute(), myGPS.getSecond(),
                     myGPS.getDay(), myGPS.getMonth(), myGPS.getYear());
             LOGI("NEW TIME: %04d-%02d-%02d %02d:%02d:%02d", 
                   year(), month(), day(), hour(), minute(), second());
+            myGPS.setAutoPVT(true);  // make GPS non-blocking
           } else {
             LOGW("GPS time unavailable");
           }
@@ -725,13 +750,26 @@ int conExec(char *conBuf, uint16_t conLen)
     printf("---\n");
 
   } else if (conBuf[1] == 'w') {
-    // WRITE register wXXYY
-    memcpy(hexBuf, conBuf+2, 2);
+    // WRITE register wXXYY (or wsXXYY to put radio in standby mode first)
+    uint8_t numPos = 2;  // position of numbers
+    if (conBuf[2] == 's') {
+      numPos++;
+    }
+    memcpy(hexBuf, conBuf+numPos, 2);
     wReg = strtoul(hexBuf, NULL, 16) & 0xff;
-    memcpy(hexBuf, conBuf+4, 2);
+    memcpy(hexBuf, conBuf+numPos+2, 2);
     wVal = strtoul(hexBuf, NULL, 16) & 0xff;
     LOGI("Write: %02x = %02x", wReg, wVal);
-    LoRa.writeRegister(wReg, wVal);
+    if (conBuf[2] == 's') {  // write in standby mode (sometimes required)
+      uint8_t oldMode = LoRa.readRegister(REG_OP_MODE);
+      // put radio in standby mode
+      LoRa.writeRegister(REG_OP_MODE, MODE_STDBY);
+      while (!(LoRa.readRegister(REG_IRQ_FLAGS_1) & 0x80)) { ; }
+      LoRa.writeRegister(wReg, wVal);
+      LoRa.writeRegister(REG_OP_MODE, oldMode);
+      while (!(LoRa.readRegister(REG_IRQ_FLAGS_1) & 0x80)) { ; }
+    } else    // just write
+      LoRa.writeRegister(wReg, wVal);
 
   } else if (conBuf[1] == 'f') {  // FILTERING
     if (conBuf[2] == 'd') {
@@ -827,4 +865,6 @@ int conExec(char *conBuf, uint16_t conLen)
   } else {
     LOGW("UNKNOWN COMMAND");
   }
+
+  return(0);
 }
