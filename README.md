@@ -78,9 +78,10 @@ u-blox NEO GPS will come in handy in future experiments.
 Make sure to select the 915MHz "USA" version, which covers all goTenna Mesh 
 bands worldwide.
 
-The Sparkfun WRL-15006 has the worst RX performance of all supported models 
-and is therefore the least recommended. If you already have one, use it while
-you're waiting for your T-Beam order to arrive. :)
+In the author's personal experience, the Sparkfun WRL-15006 had the worst RX
+performance of all supported models and is therefore the least recommended.
+If you already have one, use it while you're waiting for your T-Beam order
+to arrive. :)
 
 The 1W Sparkfun MicroMod shows promise but needs more testing.
 
@@ -98,9 +99,11 @@ Arduino IDE.
 All other required libraries are included (see **Credits** section for details)
 
 ### Optional libraries
-These libraries are used for optional extra functionality:
+These libraries are used for optional extra functionality (install from Arduino IDE):
 
 - **SparkFun u-blox GNSS** library by SparkFun Electronics - for GPS functions
+- **AXP202X** library by Lewis He - for battery management on the T-Beam
+- **ESP8266 and ESP32 OLED driver for SSD1306 displays** by ThingPulse - for screen functions on T-Beam
 
 ### Build and install
 
@@ -164,6 +167,25 @@ the gtm-lab test console.
 Implemented in the `playHarder.cpp` file and documented in 
 [playHarder.md](https://github.com/sybip/gtm-lab/blob/main/playHarder.md), 
 and subject to continuous breaking changes.
+
+## Optional / auxiliary code
+This is early stage work in progress, and the module descriptions below
+should be viewed as a statement of goals rather than current capabilities.
+
+### gtmBLE
+Using the ESP32 built-in Bluetooth module, this module implements a BLE
+service that emulates the goTenna Mesh device's BLE front-end, targeting
+100% compatibility with existing goTenna apps and SDKs.
+A no-op stub command handler is also included, to enable testing even on
+generic ESP32 boards without a long-range radio.
+
+### gtmAPI
+This module sits between `gtmBLE` and `gtmRadio`, and translates BLE API
+requests into actual gtmRadio operations, and back.
+In other words, if `gtmBLE` emulates the user side of the GTM and `gtmRadio`
+the RF network side, `gtmAPI` connects the two of them together to form a
+system that is drop-in compatible with the original goTenna Mesh
+in all operational aspects.
 
 ## Documentation and further info
 All technical information relevant to this project is (or will be) published 
