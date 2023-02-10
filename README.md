@@ -187,13 +187,17 @@ the RF network side, `gtmAPI` connects the two of them together to form a
 system that is drop-in compatible with the original goTenna Mesh
 in all operational aspects.
 
+Simple example: 
+ [02-user-device.ino](https://gist.github.com/sybip/71ef23ce380ee6ad53170d6b9bf44aef)
+
 ## Documentation and further info
 All technical information relevant to this project is (or will be) published 
 under a copyleft license in the [pyGT project wiki](https://github.com/sybip/pyGT/wiki/), 
 and of course everyone's invited to share their findings if they want to.
 
 No Github account? - no problem! Just shoot a bitmessage to the author at 
-BM-2cW2P5qmucxH4jWP2JEyqKA12VhTJibUXL
+BM-2cW2P5qmucxH4jWP2JEyqKA12VhTJibUXL, or send a note (non confidential only)
+to npub18e2gkqjducs9avdn09gakr9h5v3tdsst8mamjgu4wfv3l6drhjaqmu5t7d on Nostr.
 
 ## Credits
 
