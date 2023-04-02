@@ -1,7 +1,7 @@
 //
 // GTM LAB - goTenna Mesh protocol playground
 // ------------------------------------------
-// Copyright 2021-2022 by https://github.com/sybip (gpg 0x8295E0C0)
+// Copyright 2021-2023 by https://github.com/sybip (gpg 0x8295E0C0)
 // Released under MIT license (see LICENSE file for full details)
 //
 
@@ -13,9 +13,13 @@
 
 #include "gtmXDiscover.h"
 
+// optional, read .h file comments before including
+#include "gtmXAdHocCal.h"
+
 // THE HARDCORE PLAYGROUND
 // -----------------------
 //  do you even lift? :)
+
 
 // define USE_UBXGPS to enable and use the onboard u-blox GPS.
 // Library "SparkFun u-blox GNSS" is required for GPS functions
@@ -52,7 +56,7 @@ SFE_UBLOX_GNSS myGPS;
 #include "esp_system.h"
 #endif
 
-#define PLAY_VER 2023011101   // Playground version
+#define PLAY_VER 2023033001   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -283,6 +287,10 @@ void playInit()
   // GPS initialization
   gpsInit();
 #endif  // HAS_UBXGPS
+
+#ifdef ADHOC_CALIBRATION
+  adCalibStart();
+#endif  // ADHOC_CALIBRATION
 }
 
 // called from arduino loop
@@ -292,7 +300,15 @@ void playLoop()
   if(discoverInit && (millis() - discoverInit > 5000)) {
     discoverFinish();
   }
+
+#ifdef ADHOC_CALIBRATION
+  // any calibration in progress?
+  if (calibRunning) {
+    adCalibCheck();
+  }
+#endif  // ADHOC_CALIBRATION
 }
+
 
 // Console input handler
 // executed for each line received on the serial console
@@ -442,6 +458,15 @@ int playExec(char *conBuf, uint16_t conLen)
           if (tFeiThre)
             feiThre = tFeiThre;
           LOGI("FEI_THRE is now (+/-)%d", feiThre);
+          break;
+        case 'c':
+          memcpy(hexBuf, conBuf+4, 3);
+          uint16_t tFreqCorr;
+          tFreqCorr = strtoul(hexBuf, NULL, 10) & 0xffff;
+          if (tFreqCorr)
+            freqCorr = tFreqCorr;
+          LOGI("FREQCORR is now %d (%d Hz)", freqCorr, freqCorr * 61);  // FSTEP unints
+          fcorrRegTemp = getRadioTemp();
           break;
         default:
           LOGW("NOT FOUND");
@@ -746,6 +771,30 @@ int playExec(char *conBuf, uint16_t conLen)
               100.0*TTRK[tPeriod].timeLBT/tPTime, 100.0*TTRK[lPeriod].timeLBT/TIMETRACK_MILLIS);
       printf("- TIME EVT: %d (%.2f%%/%.2f%%)\n", TTRK[tPeriod].timeEvt,
               100.0*TTRK[tPeriod].timeEvt/tPTime, 100.0*TTRK[lPeriod].timeEvt/TIMETRACK_MILLIS);
+
+    } else if (conBuf[2] == 'e') {
+      // FEI history
+      int feiFirst = feiHistPos - feiHistLen;
+      int feiSum = 0;
+      if (feiFirst < 0)
+        feiFirst += FEI_HIST_SIZE;
+      for (uint8_t ix = 0; ix < feiHistLen; ix++) {
+        int16_t feiVal = (int16_t) feiHist[(feiFirst + ix) % FEI_HIST_SIZE];
+        if (conBuf[3] == 'v') {
+          printf("%d\n", feiVal);
+        }
+        feiSum += feiVal;
+      }
+      //if (feiHistLen)
+      //  printf("FEI_AVG=%.2f\n", 1.0 * feiSum / feiHistLen);
+      printf("FREQ_COR: %d\n", freqCorr);
+      printf("TEMP_COR: %d\n", fcorrRegTemp);
+      printf("TEMP_NOW: %d\n", getRadioTemp());
+#ifdef ADHOC_CALIBRATION
+      printf("TEMP_CAL: %d\n", calibRegTemp);
+#endif
+      printf("NSAMPLES: %d\n", feiHistLen);
+      printf("FEI_MEAN: %d\n", feiTrimMean());
     }
     printf("---\n");
 
@@ -853,6 +902,11 @@ int playExec(char *conBuf, uint16_t conLen)
     if (conBuf[2] == 'c') {  // counters (from !dc)
       gtmlabResetCounts();
       LOGI("ALL COUNTERS RESET");
+
+    } else if (conBuf[2] == 'e') {  // FEI history (from !de)
+      feiHistLen = feiHistPos = 0;
+      LOGI("FEI HISTORY RESET");
+
 #ifdef ESP32
     } else if (conBuf[2] == 'z') {  // reboot
       LOGI("REBOOT");

@@ -21,6 +21,7 @@ struct discEcho {
   uint8_t curTTL;
   uint8_t iniTTL;
   uint8_t uRSSI;
+  uint16_t FEI;
 };
 
 extern discEcho discEchoList[];

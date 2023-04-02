@@ -1,7 +1,7 @@
 //
 // GTM LAB - goTenna Mesh protocol playground
 // ------------------------------------------
-// Copyright 2021-2022 by https://github.com/sybip (gpg 0x8295E0C0)
+// Copyright 2021-2023 by https://github.com/sybip (gpg 0x8295E0C0)
 // Released under MIT license (see LICENSE file for full details)
 //
 
@@ -47,6 +47,24 @@ typedef enum {
 
 #endif  // ARDUINO_ARCH_ESP32
 
+// BOARD TYPE SETTING
+#ifndef BOARD_TYPE
+// We can autodetect board type from ARDUINO_* compile flag
+
+#ifdef ARDUINO_TBeam
+#define BOARD_TYPE 1
+
+#elif ARDUINO_ESP32_DEV
+#define BOARD_TYPE 2
+
+#elif ARDUINO_ESP32_MICROMOD
+#define BOARD_TYPE 3
+
+#else
+#error "Unrecognized board type, try setting BOARD_TYPE in gtmConfig.h"
+
+#endif
+#endif
 
 // Logging macros, common to ESP and non-ESP
 #define LOGE( format, ... ) LOG_(ESP_LOG_ERROR,   TAG, format, ##__VA_ARGS__)
@@ -108,6 +126,8 @@ extern bool holdchan;       // if true, stay on this chan
 extern bool inTXmode;
 extern bool recvData;       // if true, we are on a data chan
 
+extern int freqCorr;        // static freq correction (in FSTEP units!)
+extern int8_t fcorrRegTemp; // snapshot of temperature at the time of fcorr
 extern bool softAFC;        // enable software AFC
 extern uint16_t feiThre;    // software AFC threshold
 extern uint8_t currChan;    // current channel NUMBER
@@ -191,18 +211,22 @@ struct evCntTrack {
 
 extern evCntTrack ETRK[TIMETRACK_PERIODS];
 
+// FEI history
+#define FEI_HIST_SIZE 64
+extern uint16_t feiHist[FEI_HIST_SIZE];
+extern uint8_t feiHistPos, feiHistLen;
 
 // event handler functions
-extern bool (* onRxMSG)(uint8_t *, uint16_t, uint8_t, uint8_t, uint8_t);
-extern bool (* onRxACK)(uint16_t, uint8_t, uint8_t, uint8_t, uint8_t);
+extern bool (* onRxMSG)(uint8_t *, uint16_t, uint8_t, uint8_t, uint8_t, uint16_t);
+extern bool (* onRxACK)(uint16_t, uint8_t, uint8_t, uint8_t, uint8_t, uint16_t);
 extern bool (* onTxMSG)(uint16_t);
 extern bool (* onTxACK)(uint16_t);
 extern bool (* onRxERR)(uint16_t);
 
 
 // builtin event handlers
-bool builtinRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI);
-bool builtinRxACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI);
+bool builtinRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI);
+bool builtinRxACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI);
 bool builtinRxERR(uint16_t error);
 bool builtinTxMsgOK(uint16_t hashID);
 bool builtinTxAckOK(uint16_t hashID);
@@ -230,8 +254,14 @@ void gtmSetTxPower(uint8_t txPower);
 // Look up a hash in one of the hash ringbuffers
 bool inRingBuf(uint16_t needle, uint16_t *haystack);
 
+// Read radio temperature sensor (uncalibrated but still useful)
+int8_t getRadioTemp();
+
 // Query current radio frequency by reading REG_FRF_* registers directly
 unsigned long getFrequency();
+
+// Mean value of last nSamples FEI readings, excluding extreme values ("trimmed mean")
+int16_t feiTrimMean(uint8_t nSamples = FEI_HIST_SIZE, uint8_t trimPercent=20);
 
 // Set frequency, argument is channel number (0 to NUMCHANS)
 void setChan(uint8_t chan);

@@ -61,8 +61,8 @@ extern unsigned long apiCmdIgnoreMap;  // commands will be ignored, returning a 
 // API inputs from Radio - suitable as drop-in handlers for onRxMsg and onRxAck callbacks
 //bool gtmMsgRx2API(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI);
 //bool gtmAckRx2API(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI);
-bool apiRxMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI);
-bool apiRxAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI);
+bool apiRxMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI);
+bool apiRxAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI);
 
 // API msg output to Radio
 bool gtmMsgAPI2Tx(uint8_t * buf, uint16_t len);

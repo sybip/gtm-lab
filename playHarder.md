@@ -48,9 +48,12 @@ items labelled [BLE] require BLE support to be included at compilation time.
 | | | | **INSPECTION** |
 | !ds | -             |         | dump state variables (incomplete)
 | !dq | -             |         | dump current frequency settings (incomplete)
-| !dw | DD            | !dw08   | waterfall channel sweep (optional decimal number DD = duration in seconds)
+| !dw | DD            | !dw08   | waterfall channel sweep (optional decimal DD = duration in seconds)
 | !dc | -             |         | dump packet and error counters (incomplete)
 | !zc | -             |         | reset (Zero) packet and error counters
+| !de | -             |         | dump frequency error (FEI) aggregate data
+| !dev| -             |         | dump frequency error (FEI) raw values
+| !ze | -             |         | reset frequency error history
 | !dt | -             |         | dump time trackers (incomplete/DRAFT)
 | !db | -             |         | **[BLE]** dump current BLE state and counters
 | !dg | -             |         | **[GPS]** dump current GPS state

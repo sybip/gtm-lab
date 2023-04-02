@@ -33,19 +33,19 @@ unsigned long discoverLast = 0;  // When finished receiving latest echo
 uint16_t discoverHash = 0;    // Hash ID of the echo test
 uint16_t discEchoCount = 0;   // Number of echoes received
 
-bool (* oldRxACK)(uint16_t, uint8_t, uint8_t, uint8_t, uint8_t);
+bool (* oldRxACK)(uint16_t, uint8_t, uint8_t, uint8_t, uint8_t, uint16_t);
 bool (* oldTxACK)(uint16_t);
 
 bool oldNoDeDup;
 
 // imported from playHarder (should #ifdef this dependency)
 extern uint8_t testITTL;   // initial TTL for test messages
-
+extern uint16_t currFei;
 discEcho discEchoList[DISCOVER_MAXCOUNT];
 
 
 // simple builtin ACK handler
-bool discRxACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI)
+bool discRxACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI)
 {
   if (hashID == discoverHash) {
     // our ID has been echoed
@@ -55,16 +55,17 @@ bool discRxACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, ui
       discEchoList[discEchoCount].curTTL = curTTL;
       discEchoList[discEchoCount].iniTTL = iniTTL;
       discEchoList[discEchoCount].uRSSI = uRSSI;
+      discEchoList[discEchoCount].FEI = FEI;
     }
     discEchoCount++;
     discoverLast = millis();
-    LOGI("DISCOVER(%04x) RX:%d TTL=%d/%d RSSI=%d", hashID, 
-          discEchoCount, curTTL, iniTTL, (uRSSI >> 1));
+    LOGI("DISCOVER(%04x) RX:%d TTL=%d/%d RSSI=%d FEI=%d", hashID, 
+          discEchoCount, curTTL, iniTTL, (uRSSI >> 1), (int16_t) currFei);
     return true;
   }
 
   // not our ID, pass-through to old handler
-  return oldRxACK(hashID, hops, iniTTL, curTTL, uRSSI);
+  return oldRxACK(hashID, hops, iniTTL, curTTL, uRSSI, FEI);
 }
 
 

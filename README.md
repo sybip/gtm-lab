@@ -4,9 +4,9 @@ An unofficial goTenna Mesh protocol playground
 ## Introduction
 Hello and welcome to the GTM Lab. This is a fun project to study and 
 re-implement the goTenna Mesh protocols on inexpensive hardware based on the 
-ESP32 MCU and Semtech SX1276 long range radio modules (like HopeRF RFM95W), 
-using only unrestricted, publicly available information. All project code is 
-open source under the [MIT license](/LICENSE).
+ESP32 MCU and Semtech SX1276 long range radio modules (like HopeRF RFM95W or 
+EByte E19-915M series), using only unrestricted, publicly available information.
+All project code is open source under the [MIT license](/LICENSE).
 
 While the long-term goal of the project is a fully GTM interoperable open-source 
 protocol stack running on open-source hardware, the short term goal is really just 
@@ -187,8 +187,37 @@ the RF network side, `gtmAPI` connects the two of them together to form a
 system that is drop-in compatible with the original goTenna Mesh
 in all operational aspects.
 
-Simple example: 
- [02-user-device.ino](https://gist.github.com/sybip/71ef23ce380ee6ad53170d6b9bf44aef)
+Example: [02-user-device.ino](https://gist.github.com/sybip/71ef23ce380ee6ad53170d6b9bf44aef)
+
+## Issues, challenges and limitations
+
+### Frequency accuracy and stability
+In general, the observed frequency performance of all tested radio modules has
+been consistently inferior to the original GTM in terms of both accuracy and
+stability. This may be due to the off-label use of LoRa modems for FSK
+modulation (unlike FSK, LoRa modulation is notoriusly tolerant of frequency
+error, allowing the use of less precise oscillators), or it could be just
+a matter of sloppy coding.
+
+In any case, frequency error is and will continue to be a detrimental factor
+requiring further study and mitigation.
+
+### RF power output
+Most common radio modules (with the exception of Micromod/EByte) have a
+maximum RF power output of only 20dBm (100mW) at the antenna port,
+significantly lower than the GTM's 1W.
+
+### Power consumption
+The code is not just completely unoptimized for power usage, but in some
+places the power efficiency is currently deliberately sacrificed for the
+sake of increased operating flexibility and transparency.
+
+Some opportunities for future power optimization include:
+
+- using the built-in automation features of the SX radios, such as AFC
+- interrupt-driven I/O instead of polling
+- non-blocking BLE to allow all code to run on a single core
+- ... and a lot more
 
 ## Documentation and further info
 All technical information relevant to this project is (or will be) published 

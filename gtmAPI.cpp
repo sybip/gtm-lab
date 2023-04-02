@@ -18,7 +18,7 @@
 
 // Peripheral support is used mainly to check battery levels and charging
 //   status, however it will slightly increase the code size
-// #include "peripheral.h"  // board-specific functions
+#include "peripheral.h"  // board-specific functions
 
 #define TAG "GTMAPI"
 
@@ -188,7 +188,7 @@ bool gtmMsgAPI2Tx(uint8_t * buf, uint16_t len)
 
 
 // Converts a received MSG object from air format to api format
-bool apiRxMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI)
+bool apiRxMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI)
 {
   uint16_t pos=0; 
   uint8_t msgClass = 0;
@@ -263,7 +263,7 @@ bool apiRxMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uin
 
 
 // Converts a received ACK object from air format to api format
-bool apiRxAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI)
+bool apiRxAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI)
 {
   inBoxItem * ib = &inBoxData[inBoxHead];
 
