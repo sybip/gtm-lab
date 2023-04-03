@@ -18,7 +18,7 @@
 
 // Peripheral support is used mainly to check battery levels and charging
 //   status, however it will slightly increase the code size
-#include "peripheral.h"  // board-specific functions
+// #include "peripheral.h"  // board-specific functions
 
 #define TAG "GTMAPI"
 
