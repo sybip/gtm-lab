@@ -26,7 +26,7 @@
 
 // variables for adhoc calibration feature
 unsigned long calibStarted = 0;  // millis
-bool calibRunning = true;
+bool calibRunning = false;
 uint8_t calibSamples = 24;
 uint16_t calibSeconds = 30;
 int8_t calibRegTemp = 0;  // snapshot of temperature at calibration time
@@ -38,6 +38,7 @@ void adCalibStart(uint16_t nSamples, uint16_t timeout)
   relaying = false;
   calibSamples = nSamples;
   calibSeconds = timeout;
+  calibStarted = millis();
   calibRunning = true;
   LOGI("Adhoc calibration started for %d sec", calibSeconds);
 }
