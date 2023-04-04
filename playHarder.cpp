@@ -8,43 +8,19 @@
 #include <TimeLib.h>
 #include "LoRaRegs.h"
 #include "LoRaX.h"
-#include "gtmRadio.h"
 #include "gtmConfig.h"
+#include "gtmRadio.h"
 
 #include "gtmXDiscover.h"
 
 // optional, read .h file comments before including
 #include "gtmXAdHocCal.h"
 
+#include "peripheral.h"
+
 // THE HARDCORE PLAYGROUND
 // -----------------------
 //  do you even lift? :)
-
-
-// define USE_UBXGPS to enable and use the onboard u-blox GPS.
-// Library "SparkFun u-blox GNSS" is required for GPS functions
-// (install it in Arduino IDE using "Tools > Manage Libraries")
-//
-//#define USE_UBXGPS
-
-#ifdef USE_UBXGPS
-#include "SparkFun_u-blox_GNSS_Arduino_Library.h"
-
-// safe defaults
-#define GPS_SERIAL Serial1
-#define GPS_SPEED 9600
-
-#if BOARD_TYPE == 1
-  // GPS connection for T-Beam board
-  #define HAS_UBXGPS
-  #define GPS_PIN_RX 34
-  #define GPS_PIN_TX 12
-#endif
-
-// GPS related defines and variables
-SFE_UBLOX_GNSS myGPS;
-
-#endif  // USE_UBXGPS
 
 // define USE_GTMBLE to include and use the BLE GTM API server
 // Library gtmBLE is required
@@ -56,7 +32,7 @@ SFE_UBLOX_GNSS myGPS;
 #include "esp_system.h"
 #endif
 
-#define PLAY_VER 2023033001   // Playground version
+#define PLAY_VER 2023040301   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -227,7 +203,6 @@ int64_t gpsHAE = 1000;         // millimeters
 uint8_t gpsSIV = 1;   // satellites in view
 uint8_t gpsDOP = 1;   // point dillution of precision
 uint8_t gpsFix = 1;   // gps fix type
-bool gpsAct = true;   // gps is ACTIVE
 
 void testTakPLI()
 {
@@ -244,38 +219,6 @@ void testTakPLI()
   // use ATAK appID, DO NOT include GTA COMPAT TLVs
   testShoutTx(gtmCoT, strlen(gtmCoT), 0xd8ff, false);
 }
-
-
-#ifdef HAS_UBXGPS
-void gpsInit()
-{
-#ifdef GPS_PIN_RX
-  GPS_SERIAL.begin(GPS_SPEED, SERIAL_8N1, GPS_PIN_RX, GPS_PIN_TX);
-#else
-  GPS_SERIAL.begin(GPS_SPEED, SERIAL_8N1);
-#endif  // GPS_PIN_RX
-
-  delay(100);  // allow port to settle
-
-  gpsAct = false;
-  for (int i=0; i<3; i++) {
-    // try to init GPS
-    if (myGPS.begin(GPS_SERIAL) == true) {
-      gpsAct = true;
-      break;
-    }
-    delay(100 * (i+1));
-  }
-
-  if (gpsAct) {
-    LOGI("GPS ACTIVE");
-    myGPS.setUART1Output(COM_TYPE_UBX); //Set the UART port to output UBX only
-    myGPS.setI2COutput(COM_TYPE_UBX);   //Set the I2C port to output UBX only (turn off NMEA noise)
-    myGPS.powerSaveMode(false);
-    myGPS.setAutoPVT(true);  // make GPS non-blocking
-  }
-}
-#endif  // HAS_UBXGPS
 
 
 // Playground initialization, to be called from Arduino init()
