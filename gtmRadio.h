@@ -255,7 +255,7 @@ void gtmSetTxPower(uint8_t txPower);
 bool inRingBuf(uint16_t needle, uint16_t *haystack);
 
 // Read radio temperature sensor (uncalibrated but still useful)
-int8_t getRadioTemp();
+int8_t getRadioTemp(uint16_t maxAgeSeconds = 0);
 
 // Query current radio frequency by reading REG_FRF_* registers directly
 unsigned long getFrequency();

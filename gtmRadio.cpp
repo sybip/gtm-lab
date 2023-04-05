@@ -187,6 +187,10 @@ unsigned long txBackOff = 0; // Tx retry backoff
 uint16_t txBackMAX = 200;   // Tx max backoff
 uint8_t lbtThreDBm = SILENCE_DBM;  // LBT threshold in -dBm (abs)
 
+// REG_TEMP temperature cached last value
+int8_t tempRegValue = 0;
+unsigned long tempLastRead = 0;  // millis
+
 // quick and dirty fix
 int freqCorr = 0;  // static frequency correction in FSTEP units
                    // (~61Hz, same units as FEI, AFC etc)
@@ -418,9 +422,14 @@ bool inRingBuf(uint16_t needle, uint16_t *haystack)
 
 
 // Read radio temperature sensor
-int8_t getRadioTemp()
+int8_t getRadioTemp(uint16_t maxAgeSeconds)
 {
-  return -((int8_t)LoRa.readRegister(REG_TEMP));
+  if ((tempLastRead == 0) || ((tempLastRead + 1000 * maxAgeSeconds) < millis())) {
+    // only refresh value if it's too old
+    tempRegValue = -((int8_t)LoRa.readRegister(REG_TEMP));
+    tempLastRead = millis();
+  }
+  return(tempRegValue);
 }
 
 

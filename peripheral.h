@@ -18,6 +18,9 @@
 #include "gtmConfig.h"
 #include "gtmRadio.h"
 
+#define LED_OFF LOW
+#define LED_ON HIGH
+
 #if BOARD_TYPE == 1
   // GPS connection for T-Beam board
   #define HAS_UBXGPS
@@ -35,6 +38,8 @@
   #endif
   #define LED_BUILTIN PIN_REDLED
   #define KEY_BUILTIN PIN_BUTTON
+  #define LED_OFF HIGH
+  #define LED_ON LOW
 
 #elif BOARD_TYPE == 2 or BOARD_TYPE == 3
   #ifdef KEY_BUILTIN

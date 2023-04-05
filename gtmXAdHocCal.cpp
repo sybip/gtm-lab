@@ -47,6 +47,9 @@ void adCalibStart(uint16_t nSamples, uint16_t timeout)
 // Check on a running calibration
 bool adCalibCheck()
 {
+  if (!calibRunning)
+    return false;
+
   if ((feiHistLen >= calibSamples) || (millis()-calibStarted) > 1000*calibSeconds) {
     calibRegTemp = getRadioTemp();  // set once and never changed
     fcorrRegTemp = calibRegTemp;  // set every time we update freqCorr
@@ -58,7 +61,7 @@ bool adCalibCheck()
 
     int16_t feiAvg = feiTrimMean(calibSamples);
     LOGI("Applying CORR=%d (at TEMP=%d) and resetting history", feiAvg, calibRegTemp);
-    freqCorr = feiAvg;
+    freqCorr += feiAvg;
     feiHistLen = feiHistPos = 0;
 
     calibRunning = false;

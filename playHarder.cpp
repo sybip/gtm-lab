@@ -32,7 +32,7 @@
 #include "esp_system.h"
 #endif
 
-#define PLAY_VER 2023040301   // Playground version
+#define PLAY_VER 2023040401   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -411,6 +411,16 @@ int playExec(char *conBuf, uint16_t conLen)
           LOGI("FREQCORR is now %d (%d Hz)", freqCorr, freqCorr * 61);  // FSTEP unints
           fcorrRegTemp = getRadioTemp();
           break;
+#ifdef ADHOC_CALIBRATION
+        case 'z':                   // Recalibrate FCORR
+          if (!calibRunning) {
+            LOGI("RECALIBRATING");
+            adCalibStart();
+          } else {
+            LOGW("Calibration already IN PROGRESS");
+          }
+          break;
+#endif  // ADHOC_CALIBRATION
         default:
           LOGW("NOT FOUND");
       }

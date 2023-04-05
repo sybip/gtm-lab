@@ -33,6 +33,10 @@ uint8_t hasScreen = 0;
 uint8_t hasAXP192 = 0;
 bool gpsAct = false;
 
+// GPS UBX protocol version bytes
+uint8_t gpsUbxVMaj = 0;
+uint8_t gpsUbxVMin = 0;
+
 AXP20X_Class axp;
 
 // ADDRESS, SDA, SCL
@@ -191,7 +195,9 @@ void gpsInit()
   }
 
   if (gpsAct) {
-    LOGI("GPS ACTIVE");
+    gpsUbxVMaj = myGPS.getProtocolVersionHigh();
+    gpsUbxVMin = myGPS.getProtocolVersionLow();
+    LOGI("GPS ACTIVE, UBX v%d.%d", gpsUbxVMaj, gpsUbxVMin);
     myGPS.setUART1Output(COM_TYPE_UBX); //Set the UART port to output UBX only
     myGPS.setI2COutput(COM_TYPE_UBX);   //Set the I2C port to output UBX only (turn off NMEA noise)
     myGPS.powerSaveMode(false);
