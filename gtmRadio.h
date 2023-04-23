@@ -107,6 +107,9 @@ typedef enum {
   (byte & 0x02 ? '1' : '0'), \
   (byte & 0x01 ? '1' : '0') 
 
+// constants specific to SX127x radio
+#define FXOSC 32E6  // freq of xtal oscillator in Hz = 32MHz
+#define FSTEP 61.03515625  // synth freq step in Hz = (FXOSC/2^19)
 
 // regional radio frequency and channel settings
 struct regSet {
@@ -126,8 +129,13 @@ extern bool holdchan;       // if true, stay on this chan
 extern bool inTXmode;
 extern bool recvData;       // if true, we are on a data chan
 
-extern int freqCorr;        // static freq correction (in FSTEP units!)
+extern int freqCorrHz;        // static freq correction in Hz
+// extern int freqCorr;        // OBSOLETE static freq correction (in FSTEP units!)
 extern int8_t fcorrRegTemp; // snapshot of temperature at the time of fcorr
+extern int freqCoefHz;      // empirical thermal drift coefficient in Hz/degC
+extern int8_t calibRegTemp;  // snapshot of temperature at calibration time
+extern int16_t calibFCorrHz;  // frequency offset determined by last calbration
+
 extern bool softAFC;        // enable software AFC
 extern uint16_t feiThre;    // software AFC threshold
 extern uint8_t currChan;    // current channel NUMBER
@@ -261,6 +269,9 @@ int8_t getRadioTemp(uint16_t maxAgeSeconds = 0);
 unsigned long getFrequency();
 
 // Mean value of last nSamples FEI readings, excluding extreme values ("trimmed mean")
+//  result in integer Hz
+int feiTrimMeanHz(uint8_t nSamples = FEI_HIST_SIZE, uint8_t trimPercent=20);
+// As above, result in integer FSTEP units
 int16_t feiTrimMean(uint8_t nSamples = FEI_HIST_SIZE, uint8_t trimPercent=20);
 
 // Set frequency, argument is channel number (0 to NUMCHANS)

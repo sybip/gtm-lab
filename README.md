@@ -88,9 +88,6 @@ The 1W Sparkfun MicroMod shows promise but needs more testing.
 ### Build environment requirements
 [Arduino IDE](https://www.arduino.cc/en/software/) 1.8+ with [ESP32 support](https://github.com/espressif/arduino-esp32)
 
-If setting up Arduino/ESP32 for the first time, refer to the 
-[recommended installation instructions](https://github.com/espressif/arduino-esp32/blob/master/docs/arduino-ide/boards_manager.md).
-
 ### Dependencies
 The only external dependency is the **Time** library by Michael Margolis. 
 Install it using the *Tools > Manage Libraries* menu option in the 
@@ -194,13 +191,9 @@ Example: [02-user-device.ino](https://gist.github.com/sybip/71ef23ce380ee6ad5317
 ### Frequency accuracy and stability
 In general, the observed frequency performance of all tested radio modules has
 been consistently inferior to the original GTM in terms of both accuracy and
-stability. This may be due to the off-label use of LoRa modems for FSK
-modulation (unlike FSK, LoRa modulation is notoriusly tolerant of frequency
-error, allowing the use of less precise oscillators), or it could be just
-a matter of sloppy coding.
-
-In any case, frequency error is and will continue to be a detrimental factor
-requiring further study and mitigation.
+stability. This has been addressed partially by employing frequency offset
+correction and temperature compensation functionality in the code, however,
+it remains a subject for ongoing study and further improvement.
 
 ### RF power output
 Most common radio modules (with the exception of Micromod/EByte) have a
@@ -239,6 +232,10 @@ Copyright Mike Lubinets, Simoniy Peter, MIT license (modded to support variable 
 alternative FCRs, renamed to **RS-mod-FCR**)
 - [SparkFun u-blox GNSS Arduino Library](https://github.com/sparkfun/SparkFun_u-blox_GNSS_Arduino_Library)
 Copyright SparkFun Electronics, MIT license
+- [ESP8266 and ESP32 OLED driver for SSD1306 displays](https://github.com/ThingPulse/esp8266-oled-ssd1306)
+ Copyright Thingpulse, Daniel Eichhorn, Fabrice Weinberg, MIT license
+- [AXP202X Library](https://github.com/lewisxhe/AXP202X_Library)
+ Copyright Lewis He, MIT license
 
 ### Knowledge and information
 - [Tim](https://nitter.net/bjt2n3904) and [Woody](https://nitter.net/tb69rr) made 

@@ -13,7 +13,6 @@
 
 extern unsigned long calibStarted;  // millis
 extern bool calibRunning;
-extern int8_t calibRegTemp;
 
 // Start an adhoc calibration, optionally specifying the timeout in seconds
 // Will temporarily TURN OFF RELAYING to reduce uncalibrated transmissions

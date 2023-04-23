@@ -92,10 +92,6 @@ regSet regSets[] = {
 // Current regset - can be changed at runtime
 regSet * curRegSet = &(regSets[REGIX]);
 
-// constants specific to SX127x radio
-#define FXOSC 32E6  // freq of xtal oscillator in Hz = 32MHz
-#define FSTEP 61.03515625  // synth freq step in Hz = (FXOSC/2^19)
-
 // Common settings for GTM waveform
 int bitrate = 24000;
 int freqdev = 12500;
@@ -191,11 +187,19 @@ uint8_t lbtThreDBm = SILENCE_DBM;  // LBT threshold in -dBm (abs)
 int8_t tempRegValue = 0;
 unsigned long tempLastRead = 0;  // millis
 
-// quick and dirty fix
-int freqCorr = 0;  // static frequency correction in FSTEP units
+// Specify frequency correction in integer Hz (not FSTEP nor PPM)
+// This is explained elsewhere
+int freqCorrHz = 0;  // static frequency correction in Hz
+// obsolete
+// int freqCorr = 0;  // static frequency correction in FSTEP units
                    // (~61Hz, same units as FEI, AFC etc)
 // snapshot of current temperature at the time of most recent fcorr
 int8_t fcorrRegTemp = 0;
+int freqCoefHz = 0;  // thermal drift coefficient in Hz/degC
+
+// baseline frequency calibration values
+int8_t calibRegTemp = 0;  // snapshot of temperature at calibration time
+int16_t calibFCorrHz = 0;  // frequency offset determined by last calbration
 
 // RSSI, keep it simple
 uint8_t pktRSSI = 0;  // absolute value; RSSI = -RssiValue/2[dBm]
@@ -421,13 +425,46 @@ bool inRingBuf(uint16_t needle, uint16_t *haystack)
 }
 
 
+// Look up a hash in MSG output queue
+bool inMsgQueue(uint16_t hash16)
+{
+  for (int i = 0; i < MSG_QUEUE_SIZE; i++) {
+    if (msgQueue[i].curTTL && (msgQueue[i].hashID == hash16))
+      return true;
+  }
+  return false;
+}
+
+
+// Look up a hash in ACK output queue
+bool inAckQueue(uint16_t hash16)
+{
+  for (int i = 0; i < ACK_QUEUE_SIZE; i++) {
+    if (ackQueue[i].curTTL && (ackQueue[i].hashID == hash16))
+      return true;
+  }
+  return false;
+}
+
 // Read radio temperature sensor
+// The SX1276 manual specifies a strict seven-step method for reading
+//  the temperature sensor, but this short version seems to work OK:
+// "Put radio in STANDBY mode before polling the register"
 int8_t getRadioTemp(uint16_t maxAgeSeconds)
 {
+  // only refresh value if it's older than max age requested
   if ((tempLastRead == 0) || ((tempLastRead + 1000 * maxAgeSeconds) < millis())) {
-    // only refresh value if it's too old
+    uint8_t oldMode = LoRa.readRegister(REG_OP_MODE);
+    // put radio in standby mode
+    LoRa.writeRegister(REG_OP_MODE, MODE_STDBY);
+    // wait for mode change
+    while (!(LoRa.readRegister(REG_IRQ_FLAGS_1) & IRQ1_MODEREADY));
+
     tempRegValue = -((int8_t)LoRa.readRegister(REG_TEMP));
     tempLastRead = millis();
+
+    // return to old mode
+    LoRa.writeRegister(REG_OP_MODE, oldMode);
   }
   return(tempRegValue);
 }
@@ -459,7 +496,7 @@ void setChan(uint8_t chan)
     readyBits = 0xb0;   // MODEREADY | TXREADY | PLLLOCK
 
   // LoRa.setFrequency(curRegSet->baseFreq + (chan*curRegSet->chanStep));
-  LoRa.setFrequency(curRegSet->baseFreq + (chan*curRegSet->chanStep) + FSTEP*freqCorr);  // quickfix
+  LoRa.setFrequency(curRegSet->baseFreq + (chan*curRegSet->chanStep) + freqCorrHz);  // quickfix
 
   bool locked = false;
   while(!locked) {
@@ -772,15 +809,39 @@ void rxUnJam()
 }
 
 
+// Apply temperature compensation if available and needed
+void radioTempFreqComp() {
+  // read radio temperature, gently
+  int16_t currTemp = getRadioTemp(8);
+
+  // If offset calibration was completed, and temperature has changed:
+  // (NOTE: we check for a non-zero calibRegTemp as indication of
+  //  calibration, since we don't usually calibrate at 0 deg Celsius)
+  if (calibRegTemp && (currTemp != fcorrRegTemp)) {
+    // Only apply temperature compensation if freqCoefHz was provided
+    // Otherwise, leave freqCorrHz (and fCorrRegTemp) untouched, in
+    //  case we want to evaluate freqCoefHz from the raw drift log
+    if (freqCoefHz) {
+      // Temperature-dependent frequency offset (drift) is added to
+      //  the calibration offset (which is treated as a constant)
+      int fTempOfsHz = freqCoefHz * (currTemp - calibRegTemp);
+      freqCorrHz = calibFCorrHz + fTempOfsHz;
+      fcorrRegTemp = currTemp;
+      LOGI("dTemp=%d fCorr=%d Hz", (currTemp - calibRegTemp), fTempOfsHz);
+    }
+  }
+}
+
+
 // Calculate mean of last nSamples FEI readings, excluding highest and lowest
 //  values (trimmed mean), which are usually either misreadings or foreign
 //  transmissions
 // trim is an integer percent indicating depth of trimming relative to nSamples
 // For example, trim=20 means bottom 10% and top 10% values will be discarded
 //
-// All FEI values in FSTEP units
-//
-int16_t feiTrimMean(uint8_t nSamples, uint8_t trimPercent)
+// FEI input values in FSTEP units
+// Return value in integer Hz
+int feiTrimMeanHz(uint8_t nSamples, uint8_t trimPercent)
 {
   int16_t tmpArr[FEI_HIST_SIZE];
   uint8_t arrLen = 0;
@@ -810,9 +871,16 @@ int16_t feiTrimMean(uint8_t nSamples, uint8_t trimPercent)
   }
 
   if (feiSum)
-    return round(feiSum / (arrLen - 2.0 * trimNumber));
+    return round((FSTEP * feiSum) / (arrLen - 2.0 * trimNumber));
   else
     return 0;
+}
+
+
+// Same as above, result in integer FSTEP units
+int16_t feiTrimMean(uint8_t nSamples, uint8_t trimPercent)
+{
+  return round(feiTrimMeanHz(nSamples, trimPercent) / FSTEP);
 }
 
 
@@ -1209,6 +1277,9 @@ bool gtmlabRxTask()
   }
 
   if (scanning && !recvData) {   // no operation in progress
+    // Check and apply temperature compensations
+    radioTempFreqComp();
+
     // if scanning, HOP to next ctrl chan every SCAN_DWELL millis
     if (((millis()-lastHop) > SCAN_DWELL) && !holdchan) {
       setCtrlChan();
@@ -1457,6 +1528,9 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
       // Is this an echo of an ACK that we sent?
       if (inRingBuf(msgH16, txAckBuf)) {
         LOGI("ACK SENT BEFORE");
+      // have we already queued a copy for sending?
+      } else if (inAckQueue(msgH16)) {
+        LOGI("ACK IN TX QUEUE");
       } else {
         // if first seen, and curTTL>1, it's a relayable ACK
         if (rxBuf[5]>1) {
@@ -1538,6 +1612,9 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
         // Is this an echo of a message that we sent?
         if (inRingBuf(msgH16, txMsgBuf)) {
           LOGI("MSG SENT BEFORE");
+        // have we already queued a copy for sending?
+        } else if (inMsgQueue(msgH16)) {
+          LOGI("MSG IN TX QUEUE");
         } else {
           // if first seen, and curTTL>1, it's a relayable message
           if (lastCurTTL>1) {
@@ -1769,7 +1846,7 @@ int txEncodeAndSend(uint8_t * pktBuf, uint8_t pktLen, uint8_t pktType)
     isCtrl = true;
   }
 
-  LOGV("AIR_SIZE: %d", pktLen + 8);
+  LOGV("AIR_SIZE=%d", pktLen + 8);
 
   // and finally transmit outbuf
   return txPacket(radioBuf, pktLen + 8, isCtrl);

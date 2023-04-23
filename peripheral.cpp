@@ -157,17 +157,19 @@ bool gpsRecover()
   bool gpsGood = false;
 
   // First, brute force port speed
-  // FIXME this could be MASSIVELY improved by using an array of baudrates
+  // 38400, 1200, 57600, 2400, 115200, 4800, 230400, 9600, 460800, 19200, 921600
+  // FIXME this could be improved by using an array of baudrates
   //  sorted by likelihood, instead of a dumb counter loop
-  // (are we seriously testing 1800 bps before 38400? SO DUMB)
-  int tBaud = 0;
-  for (int i=0; i<10; i++) {
-    tBaud = 1200 << i;
-    if (gpsGood = gpsBegin(tBaud, 2))
-      break;
-    tBaud = 1800 << i;
-    if (gpsGood = gpsBegin(tBaud, 2))
-      break;
+  int tBaud = 38400;
+  if (!(gpsGood = gpsBegin(tBaud, 2))) {
+    for (int i=0; i<5; i++) {
+      tBaud = 1200 << i;
+      if (gpsGood = gpsBegin(tBaud, 2))
+        break;
+      tBaud = 57600 << i;
+      if (gpsGood = gpsBegin(tBaud, 2))
+        break;
+    }
   }
 
   // Found the GPS? now reset it and reconnect at default speed

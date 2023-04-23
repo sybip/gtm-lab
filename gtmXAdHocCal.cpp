@@ -11,11 +11,15 @@
 // On startup, listen for a number of packets or up to a number of seconds,
 //  average the frequency error of the packets and use the value as our
 //  frequency offset freqCorr (for RX **and TX**) until next reboot
-// (this is complementary to the AFC, which affects RX only)
+// (this is different to the AFC, which affects RX only)
 // See also: freqCorr and function setChan() in gtmRadio.cpp
 //
 // To avoid polluting the other nodes' own calibration processes,
 //  **relaying is disabled** during calibration to reduce TX activity
+//
+// For best results:
+// - the radio temperature should be constant during calibration
+// - all, or most of active nodes should be well calibrated
 //
 
 #include "gtmRadio.h"
@@ -27,14 +31,16 @@
 // variables for adhoc calibration feature
 unsigned long calibStarted = 0;  // millis
 bool calibRunning = false;
+bool calibRelay = DFLT_RELAY;
+
 uint8_t calibSamples = 24;
 uint16_t calibSeconds = 30;
-int8_t calibRegTemp = 0;  // snapshot of temperature at calibration time
 
 
 // Start an adhoc calibration, optionally specifying the timeout in seconds
 void adCalibStart(uint16_t nSamples, uint16_t timeout)
 {
+  calibRelay = relaying;
   relaying = false;
   calibSamples = nSamples;
   calibSeconds = timeout;
@@ -59,14 +65,16 @@ bool adCalibCheck()
       LOGI("Calibration timed out");
     }
 
-    int16_t feiAvg = feiTrimMean(calibSamples);
-    LOGI("Applying CORR=%d (at TEMP=%d) and resetting history", feiAvg, calibRegTemp);
-    freqCorr += feiAvg;
+    int feiAvgHz = feiTrimMeanHz(calibSamples);
+    LOGI("Applying CORR=%d Hz (at TEMP=%d) and resetting history", feiAvgHz, calibRegTemp);
+    freqCorrHz += feiAvgHz;
+    // save a copy for future reference
+    calibFCorrHz = freqCorrHz;
     feiHistLen = feiHistPos = 0;
 
     calibRunning = false;
     // re-enable relaying
-    relaying = DFLT_RELAY;
+    relaying = calibRelay;
   }
   return calibRunning;
 }

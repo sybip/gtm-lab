@@ -32,7 +32,7 @@
 #include "esp_system.h"
 #endif
 
-#define PLAY_VER 2023040401   // Playground version
+#define PLAY_VER 2023041001   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -231,9 +231,18 @@ void playInit()
   gpsInit();
 #endif  // HAS_UBXGPS
 
+  // If either calibration temperature or frequency are non-zero,
+  //   use them and skip automatic startup calibration
+  if (calibRegTemp || calibFCorrHz) {
+    LOGI("Using existing calibration: calibFCorrHz=%d, calibRegTemp=%d; freqCoefHz=%d",
+          calibFCorrHz, calibRegTemp, freqCoefHz);
+    fcorrRegTemp = calibRegTemp;  // set every time we update freqCorr
+    freqCorrHz = calibFCorrHz;
 #ifdef ADHOC_CALIBRATION
-  adCalibStart();
+  } else {
+    adCalibStart();
 #endif  // ADHOC_CALIBRATION
+  }
 }
 
 // called from arduino loop
@@ -259,7 +268,7 @@ void playLoop()
 // - otherwise, transmit it in the body of a "shout" message
 int playExec(char *conBuf, uint16_t conLen)
 {
-  char hexBuf[3] = {0};
+  char hexBuf[8] = {0};
   uint8_t wReg = 0;
   uint8_t wVal = 0;
   uint8_t xChan = 0;
@@ -402,17 +411,51 @@ int playExec(char *conBuf, uint16_t conLen)
             feiThre = tFeiThre;
           LOGI("FEI_THRE is now (+/-)%d", feiThre);
           break;
-        case 'c':
-          memcpy(hexBuf, conBuf+4, 3);
-          uint16_t tFreqCorr;
-          tFreqCorr = strtoul(hexBuf, NULL, 10) & 0xffff;
+        case 'o':
+          // +/- static correction offset in Hz
+          strncpy(hexBuf, conBuf+4, 3);
+          int16_t tFreqCorr;
+          tFreqCorr = strtol(hexBuf, NULL, 10);
           if (tFreqCorr)
-            freqCorr = tFreqCorr;
-          LOGI("FREQCORR is now %d (%d Hz)", freqCorr, freqCorr * 61);  // FSTEP unints
+            freqCorrHz = tFreqCorr * FSTEP;
+          LOGI("FREQCORR is now %d (%d Hz)", tFreqCorr, freqCorrHz);
           fcorrRegTemp = getRadioTemp();
           break;
+        case 'd':
+          // +/- thermal drift coefficient in Hz/degC
+          strncpy(hexBuf, conBuf+4, 6);
+          int16_t tFreqCoef;
+          tFreqCoef = strtol(hexBuf, NULL, 10);
+          if (tFreqCoef)
+            freqCoefHz = tFreqCoef;
+          LOGI("FREQCOEF is now %d Hz", tFreqCoef);
+          break;
 #ifdef ADHOC_CALIBRATION
-        case 'z':                   // Recalibrate FCORR
+        case 'c':
+          switch(conBuf[4]) {
+            case 'o':
+              // calibration offset
+              strncpy(hexBuf, conBuf+4, 6);
+              int16_t tCalFCorrHz;
+              tCalFCorrHz = strtol(hexBuf, NULL, 10);
+              // if (tFreqCoef)
+                calibFCorrHz = tCalFCorrHz;
+              LOGI("FREQ_CAL is now %d Hz", tFreqCoef);
+              break;
+            case 't':
+              // calibration temperature
+              strncpy(hexBuf, conBuf+4, 6);
+              int16_t tCalTemp;
+              tCalTemp = strtoul(hexBuf, NULL, 10);
+              if (tCalTemp)
+                calibRegTemp = tCalTemp;
+              LOGI("TEMP_CAL is now %d", calibRegTemp);
+              break;
+            default:
+              break;
+          }
+          break;
+        case 'z':                   // Recalibrate
           if (!calibRunning) {
             LOGI("RECALIBRATING");
             adCalibStart();
@@ -631,6 +674,10 @@ int playExec(char *conBuf, uint16_t conLen)
         gpsFix = myGPS.getFixType();
 
         printf("GPS ONLINE\n");
+        printf("GPS_VER : %d.%d\n", 
+          myGPS.getProtocolVersionHigh(),
+          myGPS.getProtocolVersionLow());
+
         printf("GPS_TIME: %04d-%02d-%02d %02d:%02d:%02d (%s)\n", 
           myGPS.getYear(), myGPS.getMonth(), myGPS.getDay(),
           myGPS.getHour(), myGPS.getMinute(), myGPS.getSecond(),
@@ -740,12 +787,14 @@ int playExec(char *conBuf, uint16_t conLen)
       }
       //if (feiHistLen)
       //  printf("FEI_AVG=%.2f\n", 1.0 * feiSum / feiHistLen);
-      printf("FREQ_COR: %d\n", freqCorr);
-      printf("TEMP_COR: %d\n", fcorrRegTemp);
-      printf("TEMP_NOW: %d\n", getRadioTemp());
 #ifdef ADHOC_CALIBRATION
+      printf("FREQ_CAL: %dHz\n", calibFCorrHz);
       printf("TEMP_CAL: %d\n", calibRegTemp);
 #endif
+      printf("FREQ_COR: %dHz\n", freqCorrHz);
+      printf("TEMP_COR: %d\n", fcorrRegTemp);
+      printf("FREQCOEF: %dHz\n", freqCoefHz);
+      printf("TEMP_NOW: %d\n", getRadioTemp());
       printf("NSAMPLES: %d\n", feiHistLen);
       printf("FEI_MEAN: %d\n", feiTrimMean());
     }
