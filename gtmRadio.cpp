@@ -246,7 +246,10 @@ uint8_t ackQHead = 0, ackQTail = 0;
 // number of calls to gtmLabLoop() per received packet
 int pktLoops = 0;    // 20210303 PKTLOOPS
 
-void echoCount(uint16_t hashID, bool isACK);
+void echoCount(uint16_t hashID, bool isACK, bool isOwn = false);
+
+bool processRxACK(uint16_t msgH16, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI);
+bool processRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI);
 
 // PACKET COUNTERS
 
@@ -308,6 +311,8 @@ bool (* onRxERR)(uint16_t) = builtinRxERR;
 bool (* onTxMSG)(uint16_t) = builtinTxMsgOK;
 // ACK Tx handler
 bool (* onTxACK)(uint16_t) = builtinTxAckOK;
+// Temperature change handler
+bool (* onTempChanged)(int8_t, int8_t) = builtinTempChg;
 
 
 // additive CRC16 function
@@ -455,16 +460,41 @@ int8_t getRadioTemp(uint16_t maxAgeSeconds)
   // only refresh value if it's older than max age requested
   if ((tempLastRead == 0) || ((tempLastRead + 1000 * maxAgeSeconds) < millis())) {
     uint8_t oldMode = LoRa.readRegister(REG_OP_MODE);
+    // should always read 5, however...
+    // oldMode = 1 (STDBY) may occur
+    // oldMode = 4 (FSRX) noticed occasionally, even though we never set it
+    //   (probably a transient value before mode=5 RX_CONTINUOUS)
+    // Unsure whether we need to do anything special in these cases,
+    //  for now we just log them to have a reference
+    if (oldMode != MODE_RX_CONTINUOUS)
+      LOGW("getRadioTemp MODE=%d", oldMode);
     // put radio in standby mode
     LoRa.writeRegister(REG_OP_MODE, MODE_STDBY);
     // wait for mode change
     while (!(LoRa.readRegister(REG_IRQ_FLAGS_1) & IRQ1_MODEREADY));
 
-    tempRegValue = -((int8_t)LoRa.readRegister(REG_TEMP));
-    tempLastRead = millis();
+    int8_t currTempRegV = -((int8_t)LoRa.readRegister(REG_TEMP));
 
     // return to old mode
-    LoRa.writeRegister(REG_OP_MODE, oldMode);
+    // FIXME this seems to cause instability (possibly rel to mode4 above)
+    // LoRa.writeRegister(REG_OP_MODE, oldMode);
+    // just return to RX CONT, which is our default mode
+    LoRa.writeRegister(REG_OP_MODE, MODE_RX_CONTINUOUS);
+
+    // here we can hook an action to temperature changes
+    if (currTempRegV != tempRegValue) {
+      // invoke external handler
+      // except on first (false) change from zero to current value
+      if (tempLastRead) {
+        unsigned long t0 = millis();  // track time spent in handler
+        if ((* onTempChanged) != nullptr)
+          onTempChanged(tempRegValue, currTempRegV);
+        TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
+      }
+      // update values
+      tempRegValue = currTempRegV;
+    }
+    tempLastRead = millis();
   }
   return(tempRegValue);
 }
@@ -608,6 +638,18 @@ bool findClearChan(uint8_t needData)
   cntCChFree++;
   cntLBTHits = 0;
   return true;
+}
+
+
+// Find a free control channel, and an optional data channel sequence,
+//  to transmit a packet of a given size (in bytes)
+// Size = zero indicates a control packet only (like ACK)
+bool findClearChansForDataSize(uint16_t needDataSize)
+{
+  // how many data channels? as many as the number of fragments!
+  uint8_t nFrags = ceil(1.0 * needDataSize / TXFRAGSIZE);
+
+  return findClearChan(nFrags);
 }
 
 
@@ -827,7 +869,7 @@ void radioTempFreqComp() {
       int fTempOfsHz = freqCoefHz * (currTemp - calibRegTemp);
       freqCorrHz = calibFCorrHz + fTempOfsHz;
       fcorrRegTemp = currTemp;
-      LOGI("dTemp=%d fCorr=%d Hz", (currTemp - calibRegTemp), fTempOfsHz);
+      LOGI("dTemp=%d fComp=%d Hz", (currTemp - calibRegTemp), fTempOfsHz);
     }
   }
 }
@@ -1331,13 +1373,13 @@ bool gtmlabTxTask()
       }
 
       if (! txHold) {
-        // how many data channels? as many as the number of fragments!
-        uint8_t nFrags = ceil(1.0 * msgQueue[msgQTail].msgLen / TXFRAGSIZE);
-        if (findClearChan(nFrags)) {
+        if (findClearChansForDataSize(msgQueue[msgQTail].msgLen)) {
           TTRK[ttGetPeriod()].timeLBT += (millis() - tStart);
           LOGI("LBT(%dms) OK, can TX %s MSG(pos:%d)", (millis() - tStart),
                 txLocal ? "OWN":"RLY", msgQTail);
           tStart = millis();
+
+          // Transmitter ON
           txStart();
           txRes = txSendMsg(msgQueue[msgQTail].msgObj, msgQueue[msgQTail].msgLen,
                             msgQueue[msgQTail].iniTTL, msgQueue[msgQTail].curTTL);
@@ -1350,8 +1392,10 @@ bool gtmlabTxTask()
           memset(&(msgQueue[msgQTail]), 0, sizeof(struct msgDesc));
           msgQTail = (msgQTail+1) % MSG_QUEUE_SIZE;
           resetState(false);
+          // Transmitter OFF
 
           if(txLocal && (txRes > 0)) {
+            echoCount(txRes, false, true);  // count an own MSG
             unsigned long t0 = millis();  // track time spent in handler
             if (! onTxMSG(txRes)) {
               LOGD("onTxMSG handler failed");
@@ -1382,6 +1426,8 @@ bool gtmlabTxTask()
           LOGI("LBT(%dms) OK, can TX %s ACK(pos:%d)", (millis() - tStart),
                 txLocal ? "OWN":"RLY", ackQTail);
           tStart = millis();
+
+          // Transmitter ON
           txStart();
           txSendAck(ackQueue[ackQTail].hashID, ackQueue[ackQTail].hops,
                     ackQueue[ackQTail].iniTTL, ackQueue[ackQTail].curTTL);
@@ -1395,8 +1441,10 @@ bool gtmlabTxTask()
           memset(&(ackQueue[ackQTail]), 0, sizeof(struct ackDesc));
           ackQTail = (ackQTail+1) % ACK_QUEUE_SIZE;
           resetState(false);
+          // Transmitter OFF
 
           if(txLocal) {
+            echoCount(tHash, true, true);  // count an own ACK
             unsigned long t0 = millis();  // track time spent in handler
             if (! onTxACK(tHash)) {
               LOGD("onTxACK handler failed");
@@ -1506,56 +1554,8 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
       (rxBuf[4]>>4), (rxBuf[4] & 0x0f), rxBuf[5]);
     cntRxPktACK++;
 
-    echoCount(msgH16, true);  // count an ACK
-
-    if (inRingBuf(msgH16, rxAckBuf)) {
-      isUnique = false;
-      LOGI("ACK SEEN BEFORE");
-    } else {
-      cntRxPktACKUni++;
-      rxAckBuf[rxAckPos++] = msgH16;
-      rxAckPos %= HASH_BUF_LEN;
-
-      // what's this ACK for?
-      if (inRingBuf(msgH16, txMsgBuf)) {
-        LOGI("ACK for TXd MSG");
-      } else if (inRingBuf(msgH16, rxMsgBuf)) {
-        LOGI("ACK for RXd MSG");
-      } else {
-        LOGI("ACK without MSG");        
-      }
-
-      // Is this an echo of an ACK that we sent?
-      if (inRingBuf(msgH16, txAckBuf)) {
-        LOGI("ACK SENT BEFORE");
-      // have we already queued a copy for sending?
-      } else if (inAckQueue(msgH16)) {
-        LOGI("ACK IN TX QUEUE");
-      } else {
-        // if first seen, and curTTL>1, it's a relayable ACK
-        if (rxBuf[5]>1) {
-          ////////// RELAYING //////////
-          LOGI("RELAYACK (%s)", (relaying ? "ON!":"OFF"));
-          if (relaying) {
-            // decrement curTTL and enqueue for TX
-            // FIXME catch error
-            txEnQueueACK(msgH16, (rxBuf[4]>>4), (rxBuf[4] & 0x0f), (rxBuf[5]-1));
-            cntTxPktACKRel++;
-          }
-        }
-      }
-    }
-
-    if (isUnique || noDeDup) {
-      // new ACK received - call external handler if defined
-      unsigned long t0 = millis();  // track time spent in handler
-      if ((* onRxACK) != nullptr) {
-        if (! onRxACK(msgH16, (rxBuf[4]>>4), (rxBuf[4] & 0x0f), rxBuf[5], pktRSSI, currFei)) {
-          LOGD("onRxACK handler failed");
-        }
-      }
-      TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
-    }
+    // pass the ACK object to routing/handling layer
+    processRxACK(msgH16, (rxBuf[4]>>4), (rxBuf[4] & 0x0f), rxBuf[5], uRSSI, currFei);
     resetState();
 
   } else if (rxBuf[1] == PKT_TYPE_DATA) {
@@ -1591,57 +1591,10 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
       }
 
     } else {
-      // no more frags; output packet and hop to control channel
-      // ...but first, calculate GTH16 hash
-      msgH16 = msgHash16(packetBuf);
-      LOGI("RX complete: len=%d, hash=0x%04x, time=%dms, RSSI=-%d", 
-           packetLen, msgH16, (millis()-dataStart), 
-           int(sumDChRSSI/(double)dataFrags));
+      // no more frags; submit the assembled object and hop to control channel
       cntRxDataObjTot++;
 
-      echoCount(msgH16, false);  // count an MSG
-
-      if (inRingBuf(msgH16, rxMsgBuf)) {
-        LOGI("MSG SEEN BEFORE");
-        isUnique = false;
-      } else {
-        cntRxDataObjUni++;
-        rxMsgBuf[rxMsgPos++] = msgH16;
-        rxMsgPos %= HASH_BUF_LEN;
-
-        // Is this an echo of a message that we sent?
-        if (inRingBuf(msgH16, txMsgBuf)) {
-          LOGI("MSG SENT BEFORE");
-        // have we already queued a copy for sending?
-        } else if (inMsgQueue(msgH16)) {
-          LOGI("MSG IN TX QUEUE");
-        } else {
-          // if first seen, and curTTL>1, it's a relayable message
-          if (lastCurTTL>1) {
-            ////////// RELAYING //////////
-            LOGI("RELAYMSG (%s)", (relaying ? "ON!":"OFF"));
-            if (relaying) {
-              // decrement curTTL and enqueue for TX
-              // FIXME catch error
-              txEnQueueMSG(packetBuf, packetLen, lastIniTTL, (lastCurTTL-1));
-              cntTxDataObjRel++;
-            }
-          }
-        }
-      }
-
-      if (isUnique || noDeDup) {
-        // New message received - call external handler if defined
-        unsigned long t0 = millis();  // track time spent in handler
-        if ((* onRxMSG) != nullptr) {
-          if (! onRxMSG(packetBuf, packetLen, lastIniTTL, lastCurTTL, 
-                        int(sumDChRSSI/(double)dataFrags), currFei)) {
-            LOGD("onRxMSG handler failed");
-          }
-        }
-        TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
-      }
-
+      processRxMSG(packetBuf, packetLen, lastIniTTL, lastCurTTL, int(sumDChRSSI/(double)dataFrags), currFei);
       packetLen=0;
       // will reset buffers, hop to cch and start scanning
       resetState();
@@ -1708,6 +1661,15 @@ bool builtinTxAckOK(uint16_t hashID)
 }
 
 
+// simple builtin Temperature change handler
+bool builtinTempChg(int8_t tempOld, int8_t tempNew)
+{
+  LOGI("TEMP: %d->%d", tempOld, tempNew);
+  // do nothing
+  return true;
+}
+
+
 // Prepares the radio and state buffers for transmitting one or more packets
 // There are a few things that need to be done before hitting TX on that radio
 //   in order to make it a safe and seamless experience.
@@ -1742,6 +1704,10 @@ int txStart()
 // Transmit a packet of size txLen, from txBuf
 // The data is sent as-is; any envelope, correction codes etc are the 
 //   responsibility of the caller
+//
+// FIXME-TERMS in this case, for clarity we may prefer to refer to it as
+//  a FRAME instead of a PACKET
+//
 // The radio is expected to be in TX mode, tuned to chan, with an empty FIFO
 //   (this is also the caller's job to ensure)
 // The function finishes how it started: in TX mode with an empty FIFO
@@ -1802,6 +1768,9 @@ int txPacket(uint8_t *txBuf, uint8_t txLen, bool isCtrl)
 // Takes a packet payload,
 // prepends packet header, appends crc16 and reed-solomon code
 // and then invokes txPacket() to SEND the packet over radio
+//
+// FIXME-TERMS: takes a PACKET and appends a FRAME header/footer
+//
 // NOTE: Don't use this function directly unless you really need to;
 //  the txSend(Ack|Sync|Msg) functions below are easier and safer
 int txEncodeAndSend(uint8_t * pktBuf, uint8_t pktLen, uint8_t pktType)
@@ -2027,6 +1996,121 @@ bool txEnQueueACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
 }
 
 
+// called from rxPacket to submit an incoming ACK object for processing
+bool processRxACK(uint16_t msgH16, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI)
+{
+  bool isUnique = true;  // first time we see this object
+
+  echoCount(msgH16, true);  // count an ACK
+
+  if (inRingBuf(msgH16, rxAckBuf)) {
+    isUnique = false;
+    LOGI("ACK SEEN BEFORE");
+  } else {
+    cntRxPktACKUni++;
+    rxAckBuf[rxAckPos++] = msgH16;
+    rxAckPos %= HASH_BUF_LEN;
+
+    // what's this ACK for?
+    if (inRingBuf(msgH16, txMsgBuf)) {
+      LOGI("ACK for TXd MSG");
+    } else if (inRingBuf(msgH16, rxMsgBuf)) {
+      LOGI("ACK for RXd MSG");
+    } else {
+      LOGI("ACK without MSG");
+    }
+
+    // Is this an echo of an ACK that we sent?
+    if (inRingBuf(msgH16, txAckBuf)) {
+      LOGI("ACK SENT BEFORE");
+    // have we already queued a copy for sending?
+    } else if (inAckQueue(msgH16)) {
+      LOGI("ACK IN TX QUEUE");
+    } else {
+      // if first seen, and curTTL>1, it's a relayable ACK
+      if (curTTL > 1) {
+        ////////// RELAYING //////////
+        LOGI("RELAYACK (%s)", (relaying ? "ON!":"OFF"));
+        if (relaying) {
+          // decrement curTTL and enqueue for TX
+          // FIXME catch error
+          txEnQueueACK(msgH16, hops, iniTTL, (curTTL - 1));
+          cntTxPktACKRel++;
+        }
+      }
+    }
+  }
+
+  if (isUnique || noDeDup) {
+    // new ACK received - call external handler if defined
+    unsigned long t0 = millis();  // track time spent in handler
+    if ((* onRxACK) != nullptr) {
+      if (! onRxACK(msgH16, hops, iniTTL, curTTL, uRSSI, FEI)) {
+        LOGD("onRxACK handler failed");
+      }
+    }
+    TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
+  }
+
+  return true;
+}
+
+
+// called from rxPacket to submit an incoming MSG object for processing
+bool processRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI)
+{
+  bool isUnique = true;  // first time we see this object
+  uint16_t msgH16 = msgHash16(mBuf);
+
+  LOGI("RX complete: len=%d, hash=0x%04x, time=%dms, RSSI=-%d",
+       mLen, msgH16, (millis()-dataStart), uRSSI);
+  echoCount(msgH16, false);  // count an MSG
+
+  if (inRingBuf(msgH16, rxMsgBuf)) {
+    LOGI("MSG SEEN BEFORE");
+    isUnique = false;
+  } else {
+    cntRxDataObjUni++;
+    rxMsgBuf[rxMsgPos++] = msgH16;
+    rxMsgPos %= HASH_BUF_LEN;
+
+    // Is this an echo of a message that we sent?
+    if (inRingBuf(msgH16, txMsgBuf)) {
+      LOGI("MSG SENT BEFORE");
+    // have we already queued a copy for sending?
+    } else if (inMsgQueue(msgH16)) {
+      LOGI("MSG IN TX QUEUE");
+    } else {
+      // if first seen, and curTTL>1, it's a relayable message
+      if (curTTL>1) {
+        ////////// RELAYING //////////
+        LOGI("RELAYMSG (%s)", (relaying ? "ON!":"OFF"));
+        if (relaying) {
+          // decrement curTTL and enqueue for TX
+          // FIXME catch error
+          txEnQueueMSG(mBuf, mLen, iniTTL, (curTTL - 1));
+          cntTxDataObjRel++;
+        }
+      }
+    }
+  }
+
+  if (isUnique || noDeDup) {
+    // New message received - call external handler if defined
+    unsigned long t0 = millis();  // track time spent in handler
+    if ((* onRxMSG) != nullptr) {
+      if (! onRxMSG(mBuf, mLen, iniTTL, curTTL, uRSSI, FEI)) {
+        LOGD("onRxMSG handler failed");
+      }
+    }
+    TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
+  }
+
+  return true;
+}
+
+
+
 ////////// Some additional tools & experiments below //////////
 
 // ECHO COUNTER
@@ -2055,7 +2139,7 @@ uint16_t echoAvg = 0;  // x100
 char echoFmt[33] = {0};  // formatted
 
 
-void echoCount(uint16_t hashID, bool isACK)
+void echoCount(uint16_t hashID, bool isACK, bool isOwn)
 {
   uint8_t hx = 0;  // which dataset, MSG or ACK
   uint8_t i = 0;   // index into arrays
@@ -2069,16 +2153,20 @@ void echoCount(uint16_t hashID, bool isACK)
   for (i = 0; i < ECHOSIMTRACK; i++) {
     if (e[i].hashID == hashID) {
       found = true;
-      e[i].count++;
       break;
     }
   }
   if (!found) {
     i = echoHead[hx];
     e[i].hashID = hashID;
-    e[i].count = 1;
+    e[i].count = 0;
     e[i].tStamp = millis();
     echoHead[hx] = (echoHead[hx] + 1) % ECHOSIMTRACK;
+  }
+
+  if (!isOwn) {
+    // only increment for non-own packets
+    e[i].count++;
   }
 
   int cnt = 0;

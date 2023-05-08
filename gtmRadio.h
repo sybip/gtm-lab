@@ -230,6 +230,7 @@ extern bool (* onRxACK)(uint16_t, uint8_t, uint8_t, uint8_t, uint8_t, uint16_t);
 extern bool (* onTxMSG)(uint16_t);
 extern bool (* onTxACK)(uint16_t);
 extern bool (* onRxERR)(uint16_t);
+extern bool (* onTempChange)(int8_t, int8_t);
 
 
 // builtin event handlers
@@ -238,6 +239,7 @@ bool builtinRxACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL,
 bool builtinRxERR(uint16_t error);
 bool builtinTxMsgOK(uint16_t hashID);
 bool builtinTxAckOK(uint16_t hashID);
+bool builtinTempChg(int8_t tempOld, int8_t tempNew);
 
 // additive CRC16 function
 uint16_t CRC16_add(uint8_t b, uint16_t crc = 0);
