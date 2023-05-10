@@ -10,7 +10,7 @@
 // | gtmBLE     |     | gtmAPI     |           \|/
 // +------------+     +------------+            |
 // | gtmCmdExec >-----> apiCmdExec |     +-------------+
-// | gtmCmdResp <-----< apiCmdResp |     | gtmRadio    |
+// | gtmCmdResp <-----< apiCmdResp |     | gtmNode     |
 // | gtmBLEFlag <-----< apiSetFlag |     +-------------+
 // +------------+     |   apiRxMsg <-----< onRxMsg     |
 //                    |   apiRxAck <-----< onRxAck     |

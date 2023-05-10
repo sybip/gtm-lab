@@ -9,43 +9,7 @@
 #define GTMRADIO_H
 
 #include <Arduino.h>
-
-#ifdef ARDUINO_ARCH_ESP32
-// ESP logging library and macros used below
-// https://github.com/espressif/ESP8266_RTOS_SDK/tree/master/components/log
-// If compiling for non-ESP platform, port the library from
-// (or write your own macros if preferred)
-
-#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE  // DO NOT EDIT THIS LINE
-#include "esp_log.h"
-
-#define LOG_ ESP_LOG_LEVEL_LOCAL
-#define HEXD(tag, buf, len) ESP_LOG_BUFFER_HEXDUMP(tag, buf, len, ESP_LOG_DEBUG)
-#define HEXV(tag, buf, len) ESP_LOG_BUFFER_HEXDUMP(tag, buf, len, ESP_LOG_VERBOSE)
-
-#else  // ARDUINO_ARCH_ESP32
-// we need these to be consistent
-typedef enum {
-    ESP_LOG_NONE = 0,
-    ESP_LOG_ERROR,
-    ESP_LOG_WARN,
-    ESP_LOG_INFO,
-    ESP_LOG_DEBUG,
-    ESP_LOG_VERBOSE,
-    ESP_LOG_MAX
-} esp_log_level_t;
-
-#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE  // DO NOT EDIT THIS LINE
-
-// Define these for your NON-ESP platform
-#define LOG_(level, TAG, format, ...) if (level <= logLevel) printf("%d (%d) %s: " format "\n", level, millis(), TAG, ##__VA_ARGS__)
-#define HEXV
-#define HEXD
-
-// not needed
-#define esp_log_level_set
-
-#endif  // ARDUINO_ARCH_ESP32
+#include "logging.h"
 
 // BOARD TYPE SETTING
 #ifndef BOARD_TYPE
@@ -66,25 +30,11 @@ typedef enum {
 #endif
 #endif
 
-// Logging macros, common to ESP and non-ESP
-#define LOGE( format, ... ) LOG_(ESP_LOG_ERROR,   TAG, format, ##__VA_ARGS__)
-#define LOGW( format, ... ) LOG_(ESP_LOG_WARN,    TAG, format, ##__VA_ARGS__)
-#define LOGI( format, ... ) LOG_(ESP_LOG_INFO,    TAG, format, ##__VA_ARGS__)
-#define LOGD( format, ... ) LOG_(ESP_LOG_DEBUG,   TAG, format, ##__VA_ARGS__)
-#define LOGV( format, ... ) LOG_(ESP_LOG_VERBOSE, TAG, format, ##__VA_ARGS__)
-
-
 // Radio packet types
 #define PKT_TYPE_TIME 0
 #define PKT_TYPE_SYNC 1
 #define PKT_TYPE_DATA 2
 #define PKT_TYPE_ACK  3
-
-// Message class IDs
-#define MSG_CLASS_P2P   0
-#define MSG_CLASS_GROUP 1
-#define MSG_CLASS_SHOUT 2
-#define MSG_CLASS_EMERG 3
 
 // Different RX Error types that we track separately
 #define RXERR_DEFAULT 0
@@ -94,18 +44,6 @@ typedef enum {
 #define RXERR_REEDSOLO 4
 #define RXERR_CRC16BAD 5
 #define RXERR_MISSCHAN 6
-
-// Binary output macros
-#define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
-#define BYTE_TO_BINARY(byte)  \
-  (byte & 0x80 ? '1' : '0'), \
-  (byte & 0x40 ? '1' : '0'), \
-  (byte & 0x20 ? '1' : '0'), \
-  (byte & 0x10 ? '1' : '0'), \
-  (byte & 0x08 ? '1' : '0'), \
-  (byte & 0x04 ? '1' : '0'), \
-  (byte & 0x02 ? '1' : '0'), \
-  (byte & 0x01 ? '1' : '0') 
 
 // constants specific to SX127x radio
 #define FXOSC 32E6  // freq of xtal oscillator in Hz = 32MHz
@@ -141,33 +79,18 @@ extern uint16_t feiThre;    // software AFC threshold
 extern uint8_t currChan;    // current channel NUMBER
 extern uint8_t currDChIdx;  // current data chan INDEX in map
 extern uint8_t currCChIdx;  // current ctrl chan INDEX in map
-extern bool relaying;       // enable mesh relay function
-extern bool noDeDup;
-extern bool ezOutput;       // enable simple hexdump output of RX/TX events
 extern regSet regSets[];
 extern regSet * curRegSet;
 extern uint8_t txSyncDelay;   // millis to wait between sync packet and first data packet
 extern uint8_t txPackDelay;   // millis to wait between data packets
 extern esp_log_level_t logLevel;
 extern unsigned long chanTimer;
-extern uint16_t txInertia;    // INERTIA - millis to wait before TX
-extern uint16_t txInerMAX;    // INERTIA - maximum value
 extern uint8_t lbtThreDBm;    // LBT threshold in -dBm (abs)
 extern uint8_t gtmTxPower;    // Current Tx Power
 extern unsigned long lastRadioRx; // millis when we last received (a valid packet)
 extern unsigned long lastRadioTx; // millis when we last transmitted
 
 // COUNTERS
-// ACK packets received
-extern uint32_t cntRxPktACKUni;  // unique
-// ACK packets transmitted
-extern uint32_t cntTxPktACKRel;  // relayed
-// DATA objects received
-extern uint32_t cntRxDataObjTot;  // total
-extern uint32_t cntRxDataObjUni;  // unique
-// DATA objects transmitted
-extern uint32_t cntTxDataObjTot;  // tot
-extern uint32_t cntTxDataObjRel;  // relayed
 
 // Raw packets received
 extern uint32_t cntRxPktSYNC;  // total SYNC
@@ -225,30 +148,12 @@ extern uint16_t feiHist[FEI_HIST_SIZE];
 extern uint8_t feiHistPos, feiHistLen;
 
 // event handler functions
-extern bool (* onRxMSG)(uint8_t *, uint16_t, uint8_t, uint8_t, uint8_t, uint16_t);
-extern bool (* onRxACK)(uint16_t, uint8_t, uint8_t, uint8_t, uint8_t, uint16_t);
-extern bool (* onTxMSG)(uint16_t);
-extern bool (* onTxACK)(uint16_t);
-extern bool (* onRxERR)(uint16_t);
 extern bool (* onTempChange)(int8_t, int8_t);
 
-
-// builtin event handlers
-bool builtinRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI);
-bool builtinRxACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI);
-bool builtinRxERR(uint16_t error);
-bool builtinTxMsgOK(uint16_t hashID);
-bool builtinTxAckOK(uint16_t hashID);
 bool builtinTempChg(int8_t tempOld, int8_t tempNew);
 
 // additive CRC16 function
 uint16_t CRC16_add(uint8_t b, uint16_t crc = 0);
-
-// GTH16 hash algorithm (based on park-miller LCG)
-uint16_t gtAlgoH16(uint8_t* str, size_t len);
-
-// Calculates message hash using GTH16 algo
-uint16_t msgHash16(uint8_t* mBuf);
 
 // Dump all radio registers, in hex and binary (datasheet for details)
 // Argument: ESP log level, -1 for printf
@@ -303,10 +208,6 @@ void gtmlabLoop();
 //  would prefer to not be held up by a lengthy non-gtm task
 bool gtmlabBusy();
 
-// Check (e.g from Arduino loop) if tx queue contains any objects
-//   (which would be tx-ed on the next call to gtmTxTask)
-bool gtmlabTxEmpty();
-
 // called from radio receiver for each good packet received
 int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI);
 
@@ -359,16 +260,8 @@ int txSendTime(uint64_t time32);
 // (will set channel; expects TX mode on)
 int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL);
 
-// The functions below push an outbound object into the relevant
-//  outbound queue, to be transmitted as soon as the channel is clear
-// Applications requiring collision avoidance (really ALL production
-//  applications) should use these functions to transmit messages
-//  instead of calling txSend(Ack|Sync|Msg) directly
-
-// Queue a message for sending (when channel is clear)
-bool txEnQueueMSG(uint8_t * msgObj, uint16_t msgLen, uint8_t iniTTL, uint8_t curTTL);
-
-// Queue an ACK for sending (when channel is clear)
-bool txEnQueueACK(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL);
+// Send ONE ACK or MSG packet, including TX mode switching
+bool txSendAckOne(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL);
+bool txSendMsgOne(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL);
 
 #endif // GTMRADIO_H

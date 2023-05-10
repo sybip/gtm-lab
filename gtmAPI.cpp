@@ -9,7 +9,7 @@
 //
 
 #include "gtmAPI.h"
-#include "gtmRadio.h"
+#include "gtmNode.h"
 
 // Prefer to not include gtmBLE.h, in order to avoid BLE entanglement
 //   (gtmAPI is intended to remain client connection agnostic)

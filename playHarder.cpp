@@ -10,6 +10,7 @@
 #include "LoRaX.h"
 #include "gtmConfig.h"
 #include "gtmRadio.h"
+#include "gtmNode.h"
 
 #include "gtmXDiscover.h"
 
@@ -32,7 +33,7 @@
 #include "esp_system.h"
 #endif
 
-#define PLAY_VER 2023041001   // Playground version
+#define PLAY_VER 2023042001   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)

@@ -25,6 +25,7 @@
 #include "gtmRadio.h"
 #include "gtmConfig.h"
 #include "gtmXAdHocCal.h"
+#include "gtmNode.h"  // for relaying control etc
 
 #define TAG "GTXCAL"
 

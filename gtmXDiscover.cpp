@@ -24,6 +24,7 @@
 #include "gtmRadio.h"
 #include "gtmConfig.h"
 #include "gtmXDiscover.h"
+#include "gtmNode.h"  // noDeDup etc
 
 #define TAG "DISCVR"
 
