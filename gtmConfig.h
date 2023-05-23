@@ -41,4 +41,6 @@
 #define USE_UBXGPS 1
 #define USE_GTMBLE 1
 
+#define RADIO_SX1276_FHSS  // this must always be enabled
+
 #endif // GTMCONFIG_H
