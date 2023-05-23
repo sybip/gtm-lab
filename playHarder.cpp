@@ -6,16 +6,22 @@
 //
 
 #include <TimeLib.h>
+#include "gtmConfig.h"
+
+#ifdef RADIO_SX1276_FHSS
 #include "LoRaRegs.h"
 #include "LoRaX.h"
-#include "gtmConfig.h"
 #include "gtmRadio.h"
+#endif
+
 #include "gtmNode.h"
 
 #include "gtmXDiscover.h"
 
+#ifdef RADIO_SX1276_FHSS
 // optional, read .h file comments before including
 #include "gtmXAdHocCal.h"
+#endif
 
 #include "peripheral.h"
 
@@ -33,7 +39,7 @@
 #include "esp_system.h"
 #endif
 
-#define PLAY_VER 2023042001   // Playground version
+#define PLAY_VER 2023051101   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -140,6 +146,7 @@ void testShoutTx(char * msgBody, uint16_t msgLen, int argAppID=-1, bool compatGT
   HEXD(TAG, mData, mPos);
 
   if (direct) {
+#ifdef RADIO_SX1276_FHSS
     // SEND DIRECTLY (don't "Listen-Before")
     // fire up the TX
     txStart();
@@ -148,7 +155,9 @@ void testShoutTx(char * msgBody, uint16_t msgLen, int argAppID=-1, bool compatGT
     // finally return to RX mode
     resetState();  // return to RX mode with a clean slate
     LOGI("TX COMPLETE");
-
+#else
+    LOGW("TX DROPPED (no radio)");
+#endif
   } else {
     // SEND VIA NEW RINGBUFFER (Listen-Before etc)
     if (txEnQueueMSG(mData, mPos, testITTL, testCTTL)) {
@@ -232,6 +241,7 @@ void playInit()
   gpsInit();
 #endif  // HAS_UBXGPS
 
+#ifdef RADIO_SX1276_FHSS
   // If either calibration temperature or frequency are non-zero,
   //   use them and skip automatic startup calibration
   if (calibRegTemp || calibFCorrHz) {
@@ -244,6 +254,7 @@ void playInit()
     adCalibStart();
 #endif  // ADHOC_CALIBRATION
   }
+#endif  // RADIO_SX1276_FHSS
 }
 
 // called from arduino loop
@@ -303,6 +314,7 @@ int playExec(char *conBuf, uint16_t conLen)
     }
     esp_log_level_set("*", logLevel);
 
+#ifdef RADIO_SX1276_FHSS
   } else if (conBuf[1] == 'm') {
     scanning = false;
     LOGI("SCANNING is now OFF ('!h1' to resume)");
@@ -353,9 +365,15 @@ int playExec(char *conBuf, uint16_t conLen)
         LOGI("Set Channel: %d", xChan);
         setChan(xChan);
       }
+#endif  // RADIO_SX1276_FHSS
 
   } else if (conBuf[1] == 's') {
-    if (conBuf[2] == 'd') {
+    if (conBuf[2] == 'a') {
+      appID = strtoul(conBuf+3, NULL, 16) & 0xffff;
+      LOGI("SET APPID: %04x", appID);
+
+#ifdef RADIO_SX1276_FHSS
+    } else if (conBuf[2] == 'd') {
       switch(conBuf[3]) {
         case 's':
           memcpy(hexBuf, conBuf+4, 2);
@@ -477,9 +495,7 @@ int playExec(char *conBuf, uint16_t conLen)
       gtmSetTxPower(txPower);
       LOGI("SET TX Power: %ddBm", txPower);
 
-    } else if (conBuf[2] == 'a') {
-      appID = strtoul(conBuf+3, NULL, 16) & 0xffff;
-      LOGI("SET APPID: %04x", appID);
+#endif  // RADIO_SX1276_FHSS
 
     } else if (conBuf[2] == 'r') {
       if (conBuf[3] == '0') {
@@ -569,7 +585,10 @@ int playExec(char *conBuf, uint16_t conLen)
 
   } else if (conBuf[1] == 'd') {
     // VIEW
-    if (conBuf[2] == 'a') {
+    if (false) {  // to introduce the next "else"
+
+#ifdef RADIO_SX1276_FHSS
+    } else if (conBuf[2] == 'a') {
       // READ ALL REGISTERS
       dumpRegisters(-1);  // to stdout
     } else if (conBuf[2] == 'i') {
@@ -589,6 +608,7 @@ int playExec(char *conBuf, uint16_t conLen)
       // DUMP RF SETTINGS
       printf("FREQ: %d\n", getFrequency());
       printf("\n");
+#endif  // RADIO_SX1276_FHSS
 
     } else if (conBuf[2] == 'c') {
       // uint32_t cntRxPktAll = cntRxPktSYNC + cntRxPktDATA + cntRxPktACK + cntRxPktTIME;
@@ -596,15 +616,18 @@ int playExec(char *conBuf, uint16_t conLen)
 
       // DUMP ALL COUNTERS
       printf("SYS.UPTIME: %.3fs\n", millis()/1000.);
+#ifdef RADIO_SX1276_FHSS
       printf("RX PACKETS:\n- SYNC: %d\n- DATA: %d\n-  ACK: %d\n- TIME: %d\n", 
              cntRxPktSYNC, cntRxPktDATA, cntRxPktACK, cntRxPktTIME);
       printf("TX PACKETS:\n- SYNC: %d\n- DATA: %d\n-  ACK: %d\n- TIME: %d\n", 
              cntTxPktSYNC, cntTxPktDATA, cntTxPktACK, cntTxPktTIME);
+#endif   // RADIO_SX1276_FHSS
       printf("RX OBJECTS:\n- DATA: %d (%d unique)\n-  ACK: %d (%d unique)\n", 
              cntRxDataObjTot, cntRxDataObjUni, cntRxPktACK, cntRxPktACKUni);
       printf("TX OBJECTS:\n- DATA: %d (%d own, %d relay)\n-  ACK: %d (%d own, %d relay)\n", 
              cntTxDataObjTot, (cntTxDataObjTot - cntTxDataObjRel), cntTxDataObjRel, 
              cntTxPktACK, (cntTxPktACK - cntTxPktACKRel), cntTxPktACKRel);
+#ifdef RADIO_SX1276_FHSS
       printf("RX ERRORS:\n");
       printf("- PRESTALL: %d\n", cntErrPRESTALL);
       printf("- PKTSTALL: %d\n", cntErrPKTSTALL);
@@ -621,12 +644,15 @@ int playExec(char *conBuf, uint16_t conLen)
       printf("- CTRLBUSY: %d\n", cntCChBusy);
       printf("- DATAFREE: %d\n", cntDChFree);
       printf("- DATABUSY: %d\n", cntDChBusy);
+#endif  // RADIO_SX1276_FHSS
 
     } else if (conBuf[2] == 's') {
       // READ STATE VARIABLES
       printf("PLAY_VER: %d\n", PLAY_VER);
-      printf("GPS_TYPE: " GPS_TYPE "\n");
       printf("LOGLEVEL: %d\n", logLevel);
+      printf("GPS_TYPE: " GPS_TYPE "\n");
+#ifdef RADIO_SX1276_FHSS
+      printf("LR_RADIO: SX1276_FHSS\n");
       printf("SCANNING: %s\n", scanning ? "ON":"OFF");
       printf("HOLDCHAN: %s\n", holdchan ? "ON":"OFF");
       printf("RECVDATA: %s\n", recvData ? "ON":"OFF");
@@ -635,15 +661,18 @@ int playExec(char *conBuf, uint16_t conLen)
       printf("CHANTIME: %d ms\n", millis() - chanTimer);
       printf("LASTRECV: %d ms\n", millis() - lastRadioRx);
       printf("LASTXMIT: %d ms\n", millis() - lastRadioTx);
-      printf("INERTIA : %d (max=%d)\n", txInertia, txInerMAX);
       printf("LBT_THRE: -%d dBm\n", lbtThreDBm);
       printf("PKTDELAY: SYNC=%d DATA=%d\n", txSyncDelay, txPackDelay);
-      printf("RELAYING: %s\n", relaying ? "ON":"OFF");
       printf("BASEFREQ: %d\n", curRegSet->baseFreq);
       printf("CHANSTEP: %d\n", curRegSet->chanStep);
       printf("CCHANNUM: %d\n", curRegSet->cChanNum);
       printf("DCHANNUM: %d\n", curRegSet->dChanNum);
       printf("TX_POWER: %d dBm\n", gtmTxPower);
+#else
+      printf("LR_RADIO: NONE\n");
+#endif  // RADIO_SX1276_FHSS
+      printf("RELAYING: %s\n", relaying ? "ON":"OFF");
+      printf("INERTIA : %d (max=%d)\n", txInertia, txInerMAX);
       printf("TestITTL: %d\n", testITTL);
       printf("TestCTTL: %d\n", testCTTL);
       printf("MY_APPID: 0x%04x\n", appID);
@@ -668,8 +697,65 @@ int playExec(char *conBuf, uint16_t conLen)
       }
 #endif  // USE_GTMBLE
 
-#ifdef HAS_UBXGPS
+#ifdef RADIO_SX1276_FHSS
+    } else if (conBuf[2] == 'r') {
+      if (conLen == 5) {
+        memcpy(hexBuf, conBuf+3, 2);
+        wReg = strtoul(hexBuf, NULL, 16) & 0xff;
+        wVal = LoRa.readRegister(wReg);
+        printf("0x%02x | 0x%02x | "BYTE_TO_BINARY_PATTERN"\n", wReg, wVal, BYTE_TO_BINARY(wVal));
+      }
 
+    } else if (conBuf[2] == 'w') {
+      // sWeep all channels
+      unsigned long scanEnd = millis() + 500;  // (ms)
+      if (conLen == 5) {
+        memcpy(hexBuf, conBuf+3, 2);
+        scanEnd = millis() + strtoul(hexBuf, NULL, 10) * 1000;
+      }
+
+      uint8_t oChan = currChan;
+      while (millis() < scanEnd) {
+        for (uint8_t chan = 0; chan < curRegSet->tChanNum; chan++) {
+            setChan(chan);
+            delay(2);  // ms
+            chanRSSI[chan] = LoRa.readRegister(REG_RSSI_VALUE);
+            symbRSSI[chan] = symbList[chanRSSI[chan]>>6];
+            symbRSSI[chan+1] = 0;
+        }
+        printf("%d [%s]\n", millis(), symbRSSI);
+      }
+      setChan(oChan);
+
+    } else if (conBuf[2] == 'e') {
+      // FEI history
+      int feiFirst = feiHistPos - feiHistLen;
+      int feiSum = 0;
+      if (feiFirst < 0)
+        feiFirst += FEI_HIST_SIZE;
+      for (uint8_t ix = 0; ix < feiHistLen; ix++) {
+        int16_t feiVal = (int16_t) feiHist[(feiFirst + ix) % FEI_HIST_SIZE];
+        if (conBuf[3] == 'v') {
+          printf("%d\n", feiVal);
+        }
+        feiSum += feiVal;
+      }
+      //if (feiHistLen)
+      //  printf("FEI_AVG=%.2f\n", 1.0 * feiSum / feiHistLen);
+#ifdef ADHOC_CALIBRATION
+      printf("FREQ_CAL: %dHz\n", calibFCorrHz);
+      printf("TEMP_CAL: %d\n", calibRegTemp);
+#endif
+      printf("FREQ_COR: %dHz\n", freqCorrHz);
+      printf("TEMP_COR: %d\n", fcorrRegTemp);
+      printf("FREQCOEF: %dHz\n", freqCoefHz);
+      printf("TEMP_NOW: %d\n", getRadioTemp());
+      printf("NSAMPLES: %d\n", feiHistLen);
+      printf("FEI_MEAN: %d\n", feiTrimMean());
+
+#endif // RADIO_SX1276_FHSS
+
+#ifdef HAS_UBXGPS
     } else if (conBuf[2] == 'g') {
       if (gpsAct) {
         gpsFix = myGPS.getFixType();
@@ -722,35 +808,6 @@ int playExec(char *conBuf, uint16_t conLen)
 
 #endif  // USE_GTMBLE
 
-    } else if (conBuf[2] == 'r') {
-      if (conLen == 5) {
-        memcpy(hexBuf, conBuf+3, 2);
-        wReg = strtoul(hexBuf, NULL, 16) & 0xff;
-        wVal = LoRa.readRegister(wReg);
-        printf("0x%02x | 0x%02x | "BYTE_TO_BINARY_PATTERN"\n", wReg, wVal, BYTE_TO_BINARY(wVal));
-      }
-
-    } else if (conBuf[2] == 'w') {
-      // sWeep all channels
-      unsigned long scanEnd = millis() + 500;  // (ms)
-      if (conLen == 5) {
-        memcpy(hexBuf, conBuf+3, 2);
-        scanEnd = millis() + strtoul(hexBuf, NULL, 10) * 1000;
-      }
-
-      uint8_t oChan = currChan;
-      while (millis() < scanEnd) {
-        for (uint8_t chan = 0; chan < curRegSet->tChanNum; chan++) {
-            setChan(chan);
-            delay(2);  // ms
-            chanRSSI[chan] = LoRa.readRegister(REG_RSSI_VALUE);
-            symbRSSI[chan] = symbList[chanRSSI[chan]>>6];
-            symbRSSI[chan+1] = 0;
-        }
-        printf("%d [%s]\n", millis(), symbRSSI);
-      }
-      setChan(oChan);
-
     } else if (conBuf[2] == 't') {
       // time tracking
       uint16_t tPeriod = ttGetPeriod();
@@ -773,34 +830,10 @@ int playExec(char *conBuf, uint16_t conLen)
       printf("- TIME EVT: %d (%.2f%%/%.2f%%)\n", TTRK[tPeriod].timeEvt,
               100.0*TTRK[tPeriod].timeEvt/tPTime, 100.0*TTRK[lPeriod].timeEvt/TIMETRACK_MILLIS);
 
-    } else if (conBuf[2] == 'e') {
-      // FEI history
-      int feiFirst = feiHistPos - feiHistLen;
-      int feiSum = 0;
-      if (feiFirst < 0)
-        feiFirst += FEI_HIST_SIZE;
-      for (uint8_t ix = 0; ix < feiHistLen; ix++) {
-        int16_t feiVal = (int16_t) feiHist[(feiFirst + ix) % FEI_HIST_SIZE];
-        if (conBuf[3] == 'v') {
-          printf("%d\n", feiVal);
-        }
-        feiSum += feiVal;
-      }
-      //if (feiHistLen)
-      //  printf("FEI_AVG=%.2f\n", 1.0 * feiSum / feiHistLen);
-#ifdef ADHOC_CALIBRATION
-      printf("FREQ_CAL: %dHz\n", calibFCorrHz);
-      printf("TEMP_CAL: %d\n", calibRegTemp);
-#endif
-      printf("FREQ_COR: %dHz\n", freqCorrHz);
-      printf("TEMP_COR: %d\n", fcorrRegTemp);
-      printf("FREQCOEF: %dHz\n", freqCoefHz);
-      printf("TEMP_NOW: %d\n", getRadioTemp());
-      printf("NSAMPLES: %d\n", feiHistLen);
-      printf("FEI_MEAN: %d\n", feiTrimMean());
     }
     printf("---\n");
 
+#ifdef RADIO_SX1276_FHSS
   } else if (conBuf[1] == 'w') {
     // WRITE register wXXYY (or wsXXYY to put radio in standby mode first)
     uint8_t numPos = 2;  // position of numbers
@@ -822,6 +855,7 @@ int playExec(char *conBuf, uint16_t conLen)
       while (!(LoRa.readRegister(REG_IRQ_FLAGS_1) & 0x80)) { ; }
     } else    // just write
       LoRa.writeRegister(wReg, wVal);
+#endif // RADIO_SX1276_FHSS
 
   } else if (conBuf[1] == 'f') {  // FILTERING
     if (conBuf[2] == 'd') {
@@ -834,13 +868,7 @@ int playExec(char *conBuf, uint16_t conLen)
     }
 
   } else if (conBuf[1] == 't') {
-    if (conBuf[2] == 'd') {
-      // TEST/DIRECT - send an ACK packet DIRECTLY
-      txStart();    // fire up transmitter
-      txSendAck(random(65535), 1, testITTL, testCTTL);
-      resetState(); // return to RX mode
-
-    } else if (conBuf[2] == 'a') {
+    if (conBuf[2] == 'a') {
       // TEST/ACK - test ACK sending from main loop with LBT
       uint16_t hashID = random(65535);
       // if a hashID was provided (!taXXXX), use that
@@ -852,17 +880,6 @@ int playExec(char *conBuf, uint16_t conLen)
       } else {
         LOGI("ACK DROPPED (buffer full)");
       }
-
-    } else if (conBuf[2] == 't') {
-      // TEST/TIME - send a TIME packet DIRECTLY
-      // use system time if valid, or a hardcoded constant otherwise
-      txStart();    // fire up transmitter
-      if (year() > 2020) {  // system time presumed valid
-        txSendTime(now());
-      } else {  // system time invalid, send a bogon (sorry!)
-        txSendTime(0x60501337);
-      }
-      resetState(); // return to RX mode
 
     } else if (conBuf[2] == 'x') {
       // TEST/HEXMSG
@@ -898,6 +915,26 @@ int playExec(char *conBuf, uint16_t conLen)
     } else if (conBuf[2] == 'k') {
       // TEST/ATAK - send a random ATAK PLI message
       testTakPLI();
+
+#ifdef RADIO_SX1276_FHSS
+    } else if (conBuf[2] == 'd') {
+      // TEST/DIRECT - send an ACK packet DIRECTLY
+      txStart();    // fire up transmitter
+      txSendAck(random(65535), 1, testITTL, testCTTL);
+      resetState(); // return to RX mode
+
+    } else if (conBuf[2] == 't') {
+      // TEST/TIME - send a TIME packet DIRECTLY
+      // use system time if valid, or a hardcoded constant otherwise
+      txStart();    // fire up transmitter
+      if (year() > 2020) {  // system time presumed valid
+        txSendTime(now());
+      } else {  // system time invalid, send a bogon (sorry!)
+        txSendTime(0x60501337);
+      }
+      resetState(); // return to RX mode
+#endif // RADIO_SX1276_FHSS
+
     }
 
   } else if (conBuf[1] == 'z') {
@@ -906,9 +943,11 @@ int playExec(char *conBuf, uint16_t conLen)
       gtmlabResetCounts();
       LOGI("ALL COUNTERS RESET");
 
+#ifdef RADIO_SX1276_FHSS
     } else if (conBuf[2] == 'e') {  // FEI history (from !de)
       feiHistLen = feiHistPos = 0;
       LOGI("FEI HISTORY RESET");
+#endif // RADIO_SX1276_FHSS
 
 #ifdef ESP32
     } else if (conBuf[2] == 'z') {  // reboot

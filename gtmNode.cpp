@@ -77,10 +77,12 @@ uint32_t cntTxDataObjRel = 0;  // relayed
 
 // FIXME 20230508 temporary workarounds section
 #define TTRK_FIXME
-bool gtmlabRxTask();
-bool gtmlabBusy();
-int txSendAckOne(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL);
-int txSendMsgOne(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL);
+// the 5 functions below are defined in gtmRadio
+bool gtmRadioRxTask();
+bool gtmRadioBusy();
+void gtmRadioInit();
+int gtmRadioTxAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL);
+int gtmRadioTxMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL);
 // end of FIXME section
 
 // user-definable event handler callbacks
@@ -226,6 +228,7 @@ extern unsigned long txBackOff; // Tx retry backoff
 // TIMING: <230ms when log=W and output disabled (due to serial bottleneck)
 bool gtmlabTxTask()
 {
+
   bool txHold = false;  // hold the transmission of current object (INERTIA)
   bool txLocal = true;  // the message is originated locally
   bool txRes = false;  // TX Result
@@ -265,8 +268,15 @@ bool gtmlabTxTask()
       // save a copy of hash ID to survive dequeue
       uint16_t tHash = msgHash16(msgQueue[msgQTail].msgObj);
 
-      txRes = txSendMsgOne(msgQueue[msgQTail].msgObj, msgQueue[msgQTail].msgLen,
+#ifdef RADIO_SX1276_FHSS
+      LOGI("TX MSG hash=%04x", tHash);
+      txRes = gtmRadioTxMsg(msgQueue[msgQTail].msgObj, msgQueue[msgQTail].msgLen,
                            msgQueue[msgQTail].iniTTL, msgQueue[msgQTail].curTTL);
+#else
+      LOGW("TX MSG hash=%04x NO-OP!", tHash);
+      txRes = true;  // simulate sending
+#endif  // RADIO_SX1276_FHSS
+
 
       if (txRes) {
         // save to ringbuffer
@@ -276,6 +286,8 @@ bool gtmlabTxTask()
         // advance the queue
         memset(&(msgQueue[msgQTail]), 0, sizeof(struct msgDesc));
         msgQTail = (msgQTail+1) % MSG_QUEUE_SIZE;
+
+        cntTxDataObjTot++;
 
         if(txLocal && txRes) {
           echoCount(tHash, false, true);  // count an own MSG
@@ -287,6 +299,13 @@ bool gtmlabTxTask()
           TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
 #endif
         }
+        // reset TX inertia value
+        // currently we use pure randomness, however this could be
+        // refined to be a function of measured network congestion,
+        // a timeslot-type arrangement etc
+        txInertia = random(txInerMAX);
+        LOGV("INERTIA=%dms", txInertia);
+
         return true;
       }  //  if txRes
     }  // if (! txHold)
@@ -306,8 +325,13 @@ bool gtmlabTxTask()
       // save a copy of hash ID to survive dequeue
       uint16_t tHash = ackQueue[ackQTail].hashID;
 
-      txRes = txSendAckOne(ackQueue[ackQTail].hashID, ackQueue[ackQTail].hops,
+#ifdef RADIO_SX1276_FHSS
+      txRes = gtmRadioTxAck(ackQueue[ackQTail].hashID, ackQueue[ackQTail].hops,
                 ackQueue[ackQTail].iniTTL, ackQueue[ackQTail].curTTL);
+#else
+      LOGW("TX ACK hash=%04x NO-OP", tHash);
+      txRes = true;
+#endif  // RADIO_SX1276_FHSS
 
       if (txRes) {
         // save to ringbuffer
@@ -328,6 +352,10 @@ bool gtmlabTxTask()
           TTRK[ttGetPeriod()].timeEvt += (millis() - t0);
 #endif
         }
+
+        // reset TX inertia value
+        txInertia = random(txInerMAX);
+        LOGV("INERTIA=%dms", txInertia);
         return true;
       }  // if txRes
     }  // if !txHold
@@ -535,10 +563,33 @@ bool builtinTxAckOK(uint16_t hashID)
 }
 
 
+bool gtmlabBusy()
+{
+#ifdef RADIO_SX1276_FHSS
+  return gtmRadioBusy();
+#else
+  return false;
+#endif  // RADIO_SX1276_FHSS
+}
+
+
+void gtmlabInit()
+{
+  // initialize radio
+#ifdef RADIO_SX1276_FHSS
+  gtmRadioInit();
+#else
+  LOGW("WARNING: SX1276 long-range radio is NOT ENABLED in this firmware!");
+#endif
+}
+
+
 // Call from Arduino loop to perform RX and TX tasks
 void gtmlabLoop()
 {
-  gtmlabRxTask();
+#ifdef RADIO_SX1276_FHSS
+  gtmRadioRxTask();
+#endif
 
   // if (scanning && !recvData) {   // no operation in progress
   if (!gtmlabBusy()) {   // no operation in progress

@@ -4,6 +4,20 @@
 // Copyright 2021-2023 by https://github.com/sybip (gpg 0x8295E0C0)
 // Released under MIT license (see LICENSE file for full details)
 //
+// +--------------+     +---------------+
+// |   gtmNode    |     | gtmRadio      |
+// +--------------+     +---------------+
+// |   gtmlabInit >-----> gtmRadioInit  |
+// |   gtmlabBusy >-----> gtmRadioBusy  |
+// |              |     |               |
+// |   gtmlabLoop >-----> gtmRadioRxTask|
+// | processRxMsg <-----<-----|         |
+// | processRxAck <-----<-----|         |
+// |  handleRxERR <-----<-----'         |
+// |              |     |               |
+// | gtmlabTxTask->-----> gtmRadioTxMsg |
+// |        `----->-----> gtmRadioTxAck |
+// +--------------+     +---------------+
 
 #ifndef GTMNODE_H
 #define GTMNODE_H
@@ -56,6 +70,19 @@ uint16_t gtAlgoH16(uint8_t* str, size_t len);
 
 // Calculates message hash using GTH16 algo
 uint16_t msgHash16(uint8_t* mBuf);
+
+// Check (from Arduino loop) if gtm main loop is in a busy state and
+//  would prefer to not be held up by a lengthy non-gtm task
+bool gtmlabBusy();
+
+// Call from Arduino setup() to initialize radio and data structures
+void gtmlabInit();
+
+// Call from Arduino loop to perform receiving tasks
+void gtmlabLoop();
+
+// called from main loop to check for TX tasks and execute the first in queue
+bool gtmlabTxTask();
 
 // The functions below push an outbound object into the relevant
 //  outbound queue, to be transmitted as soon as the channel is clear

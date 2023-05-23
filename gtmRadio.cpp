@@ -13,7 +13,7 @@
 #include "RS-mod-FCR.h"
 #include "logging.h"
 #include "gtmRadio.h"
-#include "gtmNode.h"
+// #include "gtmNode.h"
 
 // HARDWARE SETTINGS
 #if BOARD_TYPE==1
@@ -37,7 +37,6 @@
 #error "Invalid BOARD_TYPE"
 #endif
 
-// Logging functions and options
 #define TAG "GTMTRX"
 
 regSet regSets[] = {
@@ -97,6 +96,15 @@ regSet * curRegSet = &(regSets[REGIX]);
 // Common settings for GTM waveform
 int bitrate = 24000;
 int freqdev = 12500;
+
+// Control channel packets are 16 bytes fixed + 2 bytes syncword
+// We can fit up to (116-16-2)=98 bytes of preamble
+// ... start with 90 bytes and work from there
+uint8_t preambleTxCtrl = 90;
+
+// Data channel packets are up to 104 bytes + 2 bytes syncword
+// Use 10 bytes of preamble
+uint8_t preambleTxData = 10;
 
 // Some constants related to radio timings etc,
 // Determined mostly through trial-and-error
@@ -238,6 +246,12 @@ uint8_t ttCurPeriod = 0;
 
 // Temperature change handler
 bool (* onTempChanged)(int8_t, int8_t) = builtinTempChg;
+
+// the 3 functions below are defined in gtmNode
+void handleRxERR(uint16_t error);
+bool processRxACK(uint16_t msgH16, uint8_t hops, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI);
+bool processRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI);
+//
 
 
 // additive CRC16 function
@@ -580,13 +594,6 @@ void resetState(bool dirty)
   feiStart = 0;   // we're not measuring FEI
   currFei = 0;
 
-  // reset TX inertia value
-  // currently we use pure randomness, however this could be
-  // refined to be a function of measured network congestion,
-  // a timeslot-type arrangement etc
-  txInertia = random(txInerMAX);
-  LOGV("INERTIA=%dms", txInertia);
-
   // reset IRQ1 PREAMBLE AND SYNCWORD bits (by writing 1 to them)
   LoRa.writeRegister(REG_IRQ_FLAGS_1, 0x03);
   prev_IRQ1 = LoRa.readRegister(REG_IRQ_FLAGS_1);
@@ -617,7 +624,7 @@ void resetState(bool dirty)
 
 // Check (from Arduino loop) if gtm main loop is in a busy state and
 //  would prefer to not be held up by a lengthy non-gtm task
-bool gtmlabBusy()
+bool gtmRadioBusy()
 {
   // use existing state flags for now
   if ((scanning || holdchan) && !recvData && !inTXmode) {   // no operation in progress
@@ -793,7 +800,7 @@ int16_t feiTrimMean(uint8_t nSamples, uint8_t trimPercent)
 
 
 // Call from Arduino setup() to initialize radio and data structures
-void gtmlabInit()
+void gtmRadioInit()
 {
 #ifdef PIN_SCLK
   // radio sits on a non-default SPI
@@ -843,7 +850,7 @@ void gtmlabInit()
 
 // called from main loop to check radio and perform RX tasks
 // TIMING: <3ms when log=W and output disabled (due to serial bottleneck)
-bool gtmlabRxTask()
+bool gtmRadioRxTask()
 {
   char rx_byte = 0;
   bool payReady = false;
@@ -1347,16 +1354,11 @@ int txPacket(uint8_t *txBuf, uint8_t txLen, bool isCtrl)
   txStart = millis();
 
   if (isCtrl) {
-    // Control channel packets are 16 bytes fixed + 2 bytes syncword
-    // We can fit up to (116-16-2)=98 bytes of preamble
-    // ... start with 90 bytes and work from there
     LOGD("LONG_PRE");
-    LoRa.writeRegister(REG_FSK_PREAMBLE_LSB, 90);
+    LoRa.writeRegister(REG_FSK_PREAMBLE_LSB, preambleTxCtrl);
   } else {
-    // Data channel packets are up to 104 bytes + 2 bytes syncword
-    // Use 10 bytes of preamble
     LOGD("SHORT_PRE");
-    LoRa.writeRegister(REG_FSK_PREAMBLE_LSB, 10);
+    LoRa.writeRegister(REG_FSK_PREAMBLE_LSB, preambleTxData);
   }
 
   uint8_t fifoLevel = 0;
@@ -1526,9 +1528,7 @@ int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
     return -1;
   }
 
-  // calculate message hash
-  uint16_t msgH16 = msgHash16(mBuf);
-  LOGI("TX start: len=%d, hash=0x%04x, frags=%d", mLen, msgH16, nFrags);
+  LOGI("TX start: len=%d, frags=%d", mLen, nFrags);
 
   // send sync packet
   txSendSync(currDChIdx, nFrags, iniTTL, curTTL);
@@ -1569,8 +1569,7 @@ int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
 
     delay(txPackDelay);  // wait for others
   }
-  cntTxDataObjTot++;
-  return msgH16;
+  return 0;
 }
 
 ////////// All-In-One TX functions ////////
@@ -1583,7 +1582,7 @@ int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
 // - updates lastRadioTx at the end of transmission
 // - returns true
 // Else, sets a TX backoff and returns false
-bool txSendMsgOne(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
+bool gtmRadioTxMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
 {
   unsigned long tStart = millis();
 
@@ -1627,7 +1626,7 @@ bool txSendMsgOne(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL)
 // - updates lastRadioTx at the end of transmission
 // - returns true
 // Else, sets a TX backoff and returns false
-bool txSendAckOne(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
+bool gtmRadioTxAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL)
 {
   unsigned long tStart = millis();
 

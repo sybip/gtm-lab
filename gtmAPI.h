@@ -9,14 +9,14 @@
 // +------------+     +------------+
 // | gtmBLE     |     | gtmAPI     |           \|/
 // +------------+     +------------+            |
-// | gtmCmdExec >-----> apiCmdExec |     +-------------+
-// | gtmCmdResp <-----< apiCmdResp |     | gtmNode     |
+// | gtmCmdExec >-----> apiCmdExec |     +--------------+
+// | gtmCmdResp <-----< apiCmdResp |     | gtmNode+Radio|
 // | gtmBLEFlag <-----< apiSetFlag |     +-------------+
-// +------------+     |   apiRxMsg <-----< onRxMsg     |
-//                    |   apiRxAck <-----< onRxAck     |
-//                    |   gtmTxMsg >-----> txEnQueueMSG|
-//                    |   gtmTxAck >-----> txEnQueueACK|
-//                    +------------+     +-------------+
+// +------------+     |   apiRxMsg <-----< onRxMsg      |
+//                    |   apiRxAck <-----< onRxAck      |
+//                    |   gtmTxMsg >-----> txEnQueueMSG |
+//                    |   gtmTxAck >-----> txEnQueueACK |
+//                    +------------+     +--------------+
 
 #ifndef GTMAPI_H
 #define GTMAPI_H

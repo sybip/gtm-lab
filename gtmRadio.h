@@ -166,9 +166,6 @@ void gtmlabResetCounts();
 // use this instead of calling setTxPower() directly
 void gtmSetTxPower(uint8_t txPower);
 
-// Look up a hash in one of the hash ringbuffers
-bool inRingBuf(uint16_t needle, uint16_t *haystack);
-
 // Read radio temperature sensor (uncalibrated but still useful)
 int8_t getRadioTemp(uint16_t maxAgeSeconds = 0);
 
@@ -198,24 +195,15 @@ void setCtrlChan();
 //   or to bail out of a receive operation that failed partway
 void resetState(bool dirty = false);
 
-// Call from Arduino setup() to initialize radio and data structures
-void gtmlabInit();
-
-// Call from Arduino loop to perform receiving tasks
-void gtmlabLoop();
-
 // Check (from Arduino loop) if gtm main loop is in a busy state and
 //  would prefer to not be held up by a lengthy non-gtm task
-bool gtmlabBusy();
+bool gtmRadioBusy();
 
 // called from radio receiver for each good packet received
 int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI);
 
 // called from main loop to check radio and perform RX tasks
-bool gtmlabRxTask();
-
-// called from main loop to check for TX tasks and execute the first in queue
-bool gtmlabTxTask();
+bool gtmRadioRxTask();
 
 // Prepares the radio and state buffers for transmitting one or more packets
 // There are a few things that need to be done before hitting TX on that radio
@@ -261,7 +249,7 @@ int txSendTime(uint64_t time32);
 int txSendMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL);
 
 // Send ONE ACK or MSG packet, including TX mode switching
-bool txSendAckOne(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL);
-bool txSendMsgOne(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL);
+bool gtmRadioTxAck(uint16_t hashID, uint8_t hops, uint8_t iniTTL, uint8_t curTTL);
+bool gtmRadioTxMsg(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL);
 
 #endif // GTMRADIO_H

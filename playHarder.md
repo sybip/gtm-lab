@@ -69,6 +69,7 @@ items labelled [BLE] require BLE support to be included at compilation time.
 | !tk | -             |         | transmit a TAK PLI beacon
 | | | | **SYSTEM** |
 | !ss | **n/h**       | !ssh    | change serial console speed: normal/high<br/>n=115200, h=1Mbps
+| !p  |               | !p??    | reserved for persistent settings
 | !sb | **0/1**       | !sb0    | **[BLE]** set BLE service 0=OFF, 1=ON
 | !sc | **g**         | !scg    | **[GPS]** set system clock from source: g=GPS
 | !zz | -             |         | reboot ESP32
