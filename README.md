@@ -21,7 +21,7 @@ and ACKs** to/from the goTenna ad-hoc mesh network.
 
 ### Radio capability:
 - using inexpensive radio modules based on Semtech SX1276 chip
-- mutually interoperable with goTenna Mesh at waveform level
+- mutually intelligible with goTenna Mesh at waveform level
 - frequency corrected and temperature compensated
 - per-packet AFC on RX
 - listen-before-talk collision avoidance
