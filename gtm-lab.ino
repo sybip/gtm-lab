@@ -6,7 +6,7 @@
 //
 
 #include "gtmConfig.h"
-#include "gtmRadio.h"
+#include "gtmNode.h"
 
 // Serial console buffer
 char conBuf[256];
@@ -48,8 +48,8 @@ void loop()
   while (Serial.available()) {
     char conOne = Serial.read();
     if ((conOne == '\n') || (conLen>=(sizeof(conBuf)))){
-      conBuf[conLen++] = 0;
-      playExec(conBuf, conLen-1);  // in playHarder.cpp
+      conBuf[conLen] = 0;
+      playExec(conBuf, conLen);  // in playHarder.cpp
       conLen = 0;
     } else {
       conBuf[conLen++] = conOne;
