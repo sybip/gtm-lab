@@ -642,6 +642,18 @@ void gtmSetTxPower(uint8_t txPower)
   LoRa.writeRegister(REG_OP_MODE, MODE_STDBY);
 
   LoRa.setTxPower(txPower);
+#if BOARD_TYPE==3
+  // LoRa.setTxPower() will also change the overcurrent protection
+  //  register to (presumably) suit the 100mW PA, but is insufficient
+  //  for the 1W EBYTE module on the Micromod board.
+  // Here we DISABLE OCP to ensure the Micromod won't run out of juice
+  // FIXME this is a lazy, ham-fisted approach; ideally, the current
+  //  limiter should remain active and programmed with the correct value
+  //  to supply ONLY as much current as needed - as soon as we figure out
+  //  how much that is.
+  LoRa.writeRegister(REG_OCP, 0x00);
+  LOGW("Current limiter disabled for Micromod board");
+#endif
   LoRa.writeRegister(REG_OP_MODE, oldMode);
   gtmTxPower = txPower;
 }
@@ -694,7 +706,10 @@ void setWaveform()
   // NOTE: 0x91 (same as above, but restart WITH PLL lock)
   //   also works and may be a better option
   // LoRa.writeRegister(REG_SYNC_CONFIG, 0x51);
-  LoRa.writeRegister(REG_SYNC_CONFIG, 0x91);
+  // 20230524 - preamble polarity 0x55 seems to work better (wondering,
+  //  in fact, have we been using the wrong polarity for 2 years?)
+  LoRa.writeRegister(REG_SYNC_CONFIG, 0xB1);
+  // (change this to 0x91 (or !ws2791) to revert to 0xAA if causes issues)
 
   // Set Sync Word 0x2d 0xd4
   LoRa.writeRegister(REG_SYNC_CONFIG+1, 0x2d);
