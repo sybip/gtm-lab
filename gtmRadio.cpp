@@ -706,10 +706,8 @@ void setWaveform()
   // NOTE: 0x91 (same as above, but restart WITH PLL lock)
   //   also works and may be a better option
   // LoRa.writeRegister(REG_SYNC_CONFIG, 0x51);
-  // 20230524 - preamble polarity 0x55 seems to work better (wondering,
-  //  in fact, have we been using the wrong polarity for 2 years?)
-  LoRa.writeRegister(REG_SYNC_CONFIG, 0xB1);
-  // (change this to 0x91 (or !ws2791) to revert to 0xAA if causes issues)
+  // LoRa.writeRegister(REG_SYNC_CONFIG, 0xB1);  // 20230524 - preamble polarity 0x55 test
+  LoRa.writeRegister(REG_SYNC_CONFIG, 0x91);  // preamble polarity is 0xAA
 
   // Set Sync Word 0x2d 0xd4
   LoRa.writeRegister(REG_SYNC_CONFIG+1, 0x2d);
