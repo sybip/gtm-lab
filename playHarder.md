@@ -44,7 +44,8 @@ items labelled [BLE] require BLE support to be included at compilation time.
 | !sr | **0/1**       | !sr1    | set mesh relay function 0=OFF, 1=ON
 | !sa | **XXXX**      | !sa3fff | set App ID for outbound test msgs to XXXX (in HEX)
 | !st | **XY**        | !st32   | set TTL for outbound test msgs: init=X, curr=Y
-| !so | **0/1**       | !so1    | set builtin "easy" MSG/ACK output 0=OFF, 1=ON
+| !zg | -             |         | change temporary sender GID for test msgs to a new random value
+| !so | **0/1/2**     | !so1    | set builtin "easy" MSG/ACK output 0=OFF, 1=ON<br/>2=Simple text chat
 | | | | **INSPECTION** |
 | !ds | -             |         | dump state variables (incomplete)
 | !dq | -             |         | dump current frequency settings (incomplete)

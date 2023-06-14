@@ -148,10 +148,16 @@ bool recvData = false;  // if true, we are on a data chan
 bool softAFC = true;    // enable software AFC
 uint16_t feiThre = 32;  // apply correction only if FEI outside this threshold
 uint16_t currFei = 0;   // current FEI reading
+bool feiValid = false;  // current FEI is valid (since FEI=0 is ambiguous)
 
 // remember last 64 frequency error (FEI) readings
 uint16_t feiHist[FEI_HIST_SIZE] = { 0 };
 uint8_t feiHistPos = 0, feiHistLen = 0;
+
+// variables for FEI linear regression
+long slrSx = 0, slrSy = 0, slrSxx = 0, slrSyy = 0, slrSxy = 0;
+int slrNSam = 0;
+int16_t slrTMax = -127, slrTMin = 127;
 
 uint8_t currChan = 0;   // current channel NUMBER
 uint8_t currDChIdx = 0; // current data chan INDEX in map
@@ -324,6 +330,7 @@ unsigned long ttPeriodTime()
 // "Put radio in STANDBY mode before polling the register"
 int8_t getRadioTemp(uint16_t maxAgeSeconds)
 {
+  unsigned long tStart = millis();
   // only refresh value if it's older than max age requested
   if ((tempLastRead == 0) || ((tempLastRead + 1000 * maxAgeSeconds) < millis())) {
     uint8_t oldMode = LoRa.readRegister(REG_OP_MODE);
@@ -347,6 +354,7 @@ int8_t getRadioTemp(uint16_t maxAgeSeconds)
     // LoRa.writeRegister(REG_OP_MODE, oldMode);
     // just return to RX CONT, which is our default mode
     LoRa.writeRegister(REG_OP_MODE, MODE_RX_CONTINUOUS);
+    LOGD("getRadioTemp: %dms", millis() - tStart);
 
     // here we can hook an action to temperature changes
     if (currTempRegV != tempRegValue) {
@@ -592,6 +600,7 @@ void resetState(bool dirty)
   recvData = false;   // we're not receiving data
   pktStart = 0;   // we're not receiving a packet
   feiStart = 0;   // we're not measuring FEI
+  feiValid = false;   // FEI value not valid
   currFei = 0;
 
   // reset IRQ1 PREAMBLE AND SYNCWORD bits (by writing 1 to them)
@@ -812,6 +821,59 @@ int16_t feiTrimMean(uint8_t nSamples, uint8_t trimPercent)
 }
 
 
+// Calculate the slope and offset for the line of best fit
+//  using the simple linear regression method
+struct thermalFreqComp calcThermalFreqComp()
+{
+  struct thermalFreqComp tp;
+
+  // Since all readings are in FSTEP units, we multiply with FSTEP
+  //  in the final step, to calculate the values in Hz
+  tp.b = round(FSTEP * (slrNSam * slrSxy - slrSx * slrSy) / (slrNSam * slrSxx - slrSx * slrSx));
+  tp.a = round((FSTEP * slrSy - tp.b * slrSx) / slrNSam);
+
+  return tp;
+}
+
+
+// Sufficient data has been collected to enable thermal frequency drift calculation
+//// FIXME DRAFT ////
+bool thermalDataReady()
+{
+  if (slrTMax - slrTMin > 2)
+    return true;
+
+  return false;
+}
+
+
+// log a packet's RX conditions - for FEI history and other analytics
+// tempBase is (optional) calibration temperature - calibRegTemp
+void logRxConditions(int16_t tempC, int16_t FEI, int16_t tempBase = 0)
+{
+  // record in FEI History array
+  feiHist[feiHistPos] = FEI;
+  feiHistPos = (feiHistPos + 1) % FEI_HIST_SIZE;
+  if (feiHistLen < FEI_HIST_SIZE)
+    feiHistLen++;
+
+  LOGI("TEMP_FEI,%d,%d,%d", tempBase, tempC, FEI);
+
+  // update SLR running sums
+  tempC -= tempBase;
+  slrSx += tempC;
+  slrSy += FEI;
+  slrSxx += (tempC * tempC);
+  slrSyy += (FEI * FEI);
+  slrSxy += (tempC * FEI);
+  slrNSam++;
+  if (tempC < slrTMin)
+    slrTMin = tempC;
+  else if (tempC > slrTMax)
+    slrTMax = tempC;
+}
+
+
 // Call from Arduino setup() to initialize radio and data structures
 void gtmRadioInit()
 {
@@ -863,6 +925,21 @@ void gtmRadioInit()
 
 // called from main loop to check radio and perform RX tasks
 // TIMING: <3ms when log=W and output disabled (due to serial bottleneck)
+//
+// WARNING (not exactly a FIXME but almost)
+// This function uses the negation of global bool recvData (!recvData) as an
+//  indication that we are listening or receiving on a control channel, and
+//  from there, to infer the type of the packet being received (if recvData,
+//  then it's a data packet, else it's a control packet)
+// Note that at this point we don't actually PARSE the packet to determine
+//  its type with certainty; that's the job of rxPacket() downstream.
+// So our guess of packet type is only based on the channel we received it
+// (BTW, the transition from non-recvData to recvData happens in rxPacket()
+//  also, along with the actual channel change, so it's fairly atomic)
+// However, the assumption that !recvData => control packet is only valid
+//  BEFORE the call to rxPacket() - which may overwrite recvData.
+// You have been warned
+
 bool gtmRadioRxTask()
 {
   char rx_byte = 0;
@@ -899,6 +976,7 @@ bool gtmRadioRxTask()
         // We are on a control (long preamble) channel, start FEI measurement
         feiStart = micros();  // warning, using micros rather than millis
         currFei = 0;
+        feiValid = false;
       }
     }
 
@@ -986,6 +1064,7 @@ bool gtmRadioRxTask()
       // FEI value must be ready by now
       currFei = (LoRa.readRegister(REG_FSK_FEI_MSB) << 8) | LoRa.readRegister(REG_FSK_FEI_LSB);
       feiStart = 0;  // done measuring
+      feiValid = true;
       if (softAFC && (abs((int16_t) currFei) > feiThre)) {
         LOGI("FEI=%d (%04x), AFC", (int16_t) currFei, currFei);
         LoRa.writeRegister(REG_FSK_AFC_MSB, (currFei >> 8) & 0xff);
@@ -995,11 +1074,8 @@ bool gtmRadioRxTask()
         LOGD("FEI=%d (%04x)", (int16_t) currFei, currFei);
       }
 
-      // record the value
-      feiHist[feiHistPos] = currFei;
-      feiHistPos = (feiHistPos + 1) % FEI_HIST_SIZE;
-      if (feiHistLen < FEI_HIST_SIZE)
-        feiHistLen++;
+      // we will record the FEI value, but only for valid packets
+      // (see if(pktValid) block below)
     }
   }
   // End of frequency corrections
@@ -1040,6 +1116,8 @@ bool gtmRadioRxTask()
 
     // check PAYLOAD_READY IRQ2 bit (read and saved above)
     if (payReady) {
+      bool pktValid = false;  // payload is valid
+
       if (rssiStart) {
         // If waiting for RSSI, read it ASAP
         // FIXME check docs, it may be too late to read RSSI here
@@ -1058,11 +1136,7 @@ bool gtmRadioRxTask()
         if (rs.Decode(radioBuf, radioDec) == 0) {
           LOGD("REEDSOLO");
           // Packet OK, send it for further processing
-          TTRK[ttGetPeriod()].timeRX += (millis() - pktStart);
-          rxPacket(radioDec, radioLen-8, pktRSSI>>1);
-
-          // not really needed, but helps with debugging
-          memset(radioBuf, 0, sizeof(radioBuf));
+          pktValid = true;
 
         } else if (radioLen != (radioBuf[0]+1)) {
           // Reed-Solomon can't fix a packet of incorrect length, but may be able
@@ -1076,11 +1150,7 @@ bool gtmRadioRxTask()
           rs.begin(radioLen, 1);
           if (rs.Decode(radioBuf, radioDec) == 0) {
             LOGI("REEDSOLO-FIX!");  // GREAT SUCCESS!
-            // Packet OK, send it for further processing
-            TTRK[ttGetPeriod()].timeRX += (millis() - pktStart);
-            rxPacket(radioDec, radioLen-8, pktRSSI>>1);
-            // not really needed, but helps with debugging
-            memset(radioBuf, 0, sizeof(radioBuf));
+            pktValid = true;
           }
 
         } else {
@@ -1089,15 +1159,37 @@ bool gtmRadioRxTask()
                 currChan, radioLen, pktRSSI>>1);
           cntErrREEDSOLO++;
           handleRxERR(RXERR_REEDSOLO);
-
-          resetState(true);
         }
+
       } else {
         LOGD("Invalid rxLen");
-        resetState(true);
       }
 
-      // Finished processing a radio packet, clean up a bit
+      // After RS corrections, our RX buffer content is final
+      // It may or not contain a valid packet, as indicated by pktValid
+      // We retain valid packets and discard the rest
+      if (pktValid) {
+        // Packet OK, send it for further processing
+/*
+        if (!recvData && feiValid) {
+          // on a control channel, just received a valid packet with valid FEI
+          // -> record the value now
+          logRxConditions(getRadioTemp(), currFei);
+        }
+*/
+        TTRK[ttGetPeriod()].timeRX += (millis() - pktStart);
+        rxPacket(radioDec, radioLen-8, pktRSSI>>1);  // may overwrite recvData flag
+
+        // not really needed, but helps with debugging
+        memset(radioBuf, 0, sizeof(radioBuf));
+      } else {
+        // invalid packet, reset and bail out
+        LOGI("Pkt dropped");
+        resetState(true);
+        return false;
+      }
+
+      // Finished processing a radio payload, clean up a bit
 
       // Frequency corrections, part 2 (post SYNC packet)
       if (wantFrags) {
@@ -1117,7 +1209,7 @@ bool gtmRadioRxTask()
 
         // Here we REload currFei into AFC registers, if required
 
-        if (softAFC && (abs((int16_t) currFei) > feiThre)) {
+        if (feiValid && softAFC && (abs((int16_t) currFei) > feiThre)) {
           LoRa.writeRegister(REG_FSK_AFC_MSB, (currFei >> 8) & 0xff);
           LoRa.writeRegister(REG_FSK_AFC_LSB, currFei & 0xff);
         }
@@ -1258,6 +1350,10 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
       (rxBuf[4]>>4), (rxBuf[4] & 0x0f), rxBuf[5]);
     cntRxPktACK++;
 
+    if (feiValid)
+      // record the value
+      // logRxConditions(getRadioTemp(), currFei);
+      logRxConditions(getRadioTemp(), currFei, calibRegTemp);
     // pass the ACK object to routing/handling layer
     processRxACK(msgH16, (rxBuf[4]>>4), (rxBuf[4] & 0x0f), rxBuf[5], uRSSI, currFei);
     resetState();
@@ -1291,6 +1387,10 @@ int rxPacket(uint8_t * rxBuf, uint8_t rxLen, uint8_t uRSSI)
 
     } else {
       // no more frags; submit the assembled object and hop to control channel
+      if (feiValid)
+        // record the value
+        // logRxConditions(getRadioTemp(), currFei);
+        logRxConditions(getRadioTemp(), currFei, calibRegTemp);
       processRxMSG(packetBuf, packetLen, lastIniTTL, lastCurTTL, int(sumDChRSSI/(double)dataFrags), currFei);
       packetLen=0;
       // will reset buffers, hop to cch and start scanning

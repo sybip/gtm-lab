@@ -39,7 +39,7 @@
 #include "esp_system.h"
 #endif
 
-#define PLAY_VER 2023051101   // Playground version
+#define PLAY_VER 2023060601   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -59,10 +59,28 @@
 uint16_t appID = DFLT_APPID;  // defined in gtmConfig.h
 uint8_t testITTL = 3;   // initial TTL for test messages
 uint8_t testCTTL = 2;   // current TTL for test messages
+uint8_t testGID[6] = {0};  // sender GID for test messages (independent from gtmAPI GIDs)
+
+extern long slrSx, slrSy, slrSxx, slrSyy, slrSxy;
+extern int slrNSam;
+extern int16_t slrTMax, slrTMin;
+
+
+// NOTE: instead of generating a random sender GID for each outbound test message,
+//  we now generate one at startup and use it for all messages in current session
+// While this is clearly less cypherpunk than the original approach,
+//  it is useful in multi-unit test scenarios, also makes the "tiny chat" feature
+//  less confusing
+// Security conscious users please note:
+// - rebooting your device will change the test GID to a new random value
+// - function resetTestGID() and console command !zg
+//
 
 uint8_t chanRSSI[64] = { 0 };   // shouldn't be that many channels, max known is 51
 char symbRSSI[64] = { 0 };      // symbolic representation of RSSI
 char symbList[] = { '#', '=', '-', ' ' };
+
+bool tinyChat = false;  // tiny chat mode - type and read messages in the console
 
 // Assembles and sends a "shout" message with the supplied string as message body
 // (thanks to https://gitlab.com/almurphy for the Arduino implementation)
@@ -88,9 +106,9 @@ void testShoutTx(char * msgBody, uint16_t msgLen, int argAppID=-1, bool compatGT
   mData[mPos++] = 0;     // padding
   mData[mPos++] = 0;     // padding
 
-  // sender GID, unused
+  // sender GID, unused; value is randomized on every reboot
   for (int i=0; i<6; i++) {
-      mData[mPos++] = random(255);
+      mData[mPos++] = testGID[i];
   }
 
   // timestamp
@@ -169,6 +187,213 @@ void testShoutTx(char * msgBody, uint16_t msgLen, int argAppID=-1, bool compatGT
 }
 
 
+/*
+ * Calculates "printability" factor of a memory range,
+ *   as the percentage of printable characters
+ * Encrypted data should be < 50, decrypted data typically > 90
+ */
+uint8_t printability(uint8_t * data, uint16_t len)
+{
+  uint16_t pCount=0;
+  for (int ix = 0; ix < len; ix++) {
+    if(isPrintable(data[ix]))
+      pCount++;
+  }
+  pCount = (100*pCount)/len;
+  return (pCount & 0xff);
+}
+
+
+/* Counts semicolon characters in a given memory range */
+uint16_t semicolons(uint8_t * data, uint16_t len)
+{
+  uint16_t sCount=0;
+  for (int ix = 0; ix < len; ix++) {
+    if(data[ix] == ';')
+      sCount++;
+  }
+  return (sCount);
+}
+
+
+
+// Parses a GTM data object
+// (based on https://gitlab.com/almurphy)
+bool myParseMessage(uint8_t * buf, uint16_t len)
+{
+  uint16_t pos=0;  // position of DATA element
+  uint8_t msgClass;
+  uint16_t msgAppID;
+  uint32_t msgTStamp = 0;
+  uint32_t msgFromHi = 0, msgFromLo = 0;
+  uint32_t msgDestHi = 0, msgDestLo = 0;
+  uint8_t msgBlobPos = 0;
+  uint8_t msgBlobLen = 0;
+  uint8_t cryptFlag = 0;
+  int msgBlobCRC = 0;
+  uint8_t tNick[16] = {0};
+  uint8_t tText[256] = {0};
+  bool procSuccess = false;
+  bool crcGood = false;  // CRC good indicates GTA or SDK originated
+
+  // parse DEST element
+  msgClass = buf[pos];
+  msgAppID = (buf[pos+1]<<8) + buf[pos+2];
+
+  // Two types of TLV_DEST - short (3 bytes) and long (10 bytes)
+  if ((msgClass == 0) || (msgClass==1)) {
+    // long TLV_DEST, Class-App-GID-Tag
+    msgDestHi = (buf[pos+3]<<8) + buf[pos+4];
+    msgDestLo = (buf[pos+5]<<24) + (buf[pos+6]<<16) + (buf[pos+7]<<8) + buf[pos+8];
+    // msgDest = (msgDestHi << 32) | msgDestLo;
+    LOGD(" [DEST] Class=%d, AppID=0x%04x, Dest=0x%04x%08x, Suffix=%0x02x",
+              msgClass, msgAppID, msgDestHi, msgDestLo, buf[pos+9]);
+    pos = 10;
+  } else {
+    // short TLV_DEST, Class-App
+    LOGD(" [DEST] Class=%d, AppID=0x%04x", msgClass, msgAppID);
+    pos = 3;
+  }
+
+  // We expect DATA value to begin with 0xFB 0x10; anything else confuses us
+  if ((buf[pos] != 0xfb) || (buf[pos+1] != 0x10)) {
+    LOGD(" [DATA] UNKNOWN FORMAT");
+    ESP_LOG_BUFFER_HEXDUMP(TAG, buf, len, ESP_LOG_DEBUG);
+    // break;  // bail out early
+    return false;
+  }
+
+  // start parsing FB section
+  // "BQLHB", cryptFlag, fromGID, tStamp, seqNo0, seqNo1
+  cryptFlag = buf[pos+2];
+  // process sender field in 32-bit chunks to avoid Arduino headache
+  msgFromHi = (buf[pos+3]<<24) + (buf[pos+4]<<16) + (buf[pos+5]<<8) + buf[pos+6];
+  msgFromLo = (buf[pos+7]<<24) + (buf[pos+8]<<16) + (buf[pos+9]<<8) + buf[pos+10];
+
+  // 32-bit unix timestamp
+  msgTStamp = (buf[pos+11]<<24) + (buf[pos+12]<<16) + (buf[pos+13]<<8) + buf[pos+14];
+  // Save a copy in case we need it to set our clock
+  // timeFromMsg = msgTStamp;
+
+  // The FB section of the DATA element has a standard format
+  //   however, the rest of the element is an application specific
+  //   blob, followed by a (2-byte) CRC16X
+  // Record the blob's coordinates for future reference
+  msgBlobPos = pos + 18;          // Skip FB header (16+2=18 bytes)
+  msgBlobLen = len - msgBlobPos;  // total length minus sizeof FB header
+                                  // (this includes CRC16x if present)
+
+  // Arduino has trouble formatting 64-bit integers, let's keep it 32-bit
+  LOGD(" [DATA] Crypt=%d, From=0x%04x%08x, TStamp=%d, Len=%d",
+          cryptFlag, msgFromHi, msgFromLo, msgTStamp, msgBlobLen);
+
+  LOGD("        SeqNo0=0x%04x, SeqNo0=0x%02x",
+          (buf[pos+15]<<8) + buf[pos+16], buf[pos+17]);
+
+  // Calculate blob CRC
+  msgBlobCRC = 0;
+  for (int ix=0; ix<(msgBlobLen-2); ix++) {
+    // msgBlobCRC = CRC16X_add(buf[msgBlobPos+ix], msgBlobCRC);
+    msgBlobCRC = CRC16_add(buf[msgBlobPos+ix], msgBlobCRC);
+  }
+  if (msgBlobCRC == ((buf[msgBlobPos+msgBlobLen-2]<<8) + buf[msgBlobPos+msgBlobLen-1])) {
+    LOGD("CRC16X: %04x GOOD", msgBlobCRC);
+    crcGood = true;
+  } else {
+    LOGW("CRC16X: %04x ERROR", msgBlobCRC);
+  }
+
+  // Hexdump blob
+  LOGD("DATABLOB (printability=%d, semicolons=%d):",
+          printability(buf + msgBlobPos, msgBlobLen),
+          semicolons(buf + msgBlobPos, msgBlobLen));
+  ESP_LOG_BUFFER_HEXDUMP(TAG, buf + msgBlobPos, msgBlobLen, ESP_LOG_DEBUG);
+
+  // DATABLOB ANALYSIS
+  // -----------------
+
+  // First off, is the Crypt indicator >0?
+  // - if yes, we have a GTA encrypted message (ECDH, HMAC and all)
+  //   We let it go for now.
+  if (cryptFlag) {
+    LOGD(" skipping GTA encrypted message");
+    // break;
+    return false;
+  }
+
+  // all remaining formats supported below require CRC good
+  if (!crcGood)
+    return false;
+
+  // Next, does the blob start with "01 01 30 03"?
+  // (that's MSGB_TLV_TYPE, len=1, TYPE_TEXT, MSGB_TLV_NICK)
+  // - if yes, it's a cleartext GTA format message (nested TLV)
+  //   (which can also contain a TAK-GTM chat message)
+  if (memcmp(buf + msgBlobPos, "\x01\x01\x30\x03", 4) == 0) {
+    LOGD(" cleartext GTA message");
+    uint8_t mPos = 0;
+    while (mPos < (msgBlobLen - 2)) {
+      // parse GTA TLVs
+      uint8_t tmpT = buf[msgBlobPos + mPos];
+      uint8_t tmpL = buf[msgBlobPos + mPos + 1];
+      LOGD("  T: 0x%02x, L: %d ", tmpT, tmpL);
+      if (tmpT == MSGB_TLV_NICK) {
+        if (tmpL > 15)
+          tmpL = 15;  // clamp nickname field
+        memcpy(tNick, buf + msgBlobPos + mPos + 2, tmpL);
+      } else if (tmpT == MSGB_TLV_TEXT) {
+        memcpy(tText, buf + msgBlobPos + mPos + 2, tmpL);
+      }
+      // Finished processing element, advance read position
+      mPos += tmpL + 2;  // Len + T/L bytes
+    }
+    if (strlen((char *)tText) > 0) {
+      printf("[%04x%08x] %s > %s\n", msgFromHi, msgFromLo, (char *)tNick, (char *)tText);
+    }
+    return true;
+  }
+
+#if 0  // probably not needed in our scenario
+  // Next, check printability of blob
+  if ((printability(buf + msgBlobPos, msgBlobLen) > 80) &&
+      (semicolons(buf + msgBlobPos, msgBlobLen) == 8)) {
+    // (DIRTY) insert C string ending at known end position
+    buf[msgBlobPos + msgBlobLen - 2] = 0;  // trim CRC
+    LOGD("==> FINAL GTM-TAK (CLR): %s", (buf + msgBlobPos));
+    procSuccess = true;
+    // break;
+  }
+#endif
+
+  return procSuccess;
+}
+
+bool (* origRxMSG)(uint8_t *, uint16_t, uint8_t, uint8_t, uint8_t, uint16_t);
+
+// simple builtin MSG handler with tap for tiny chat mode
+bool playRxMSG(uint8_t * mBuf, uint16_t mLen, uint8_t iniTTL, uint8_t curTTL, uint8_t uRSSI, uint16_t FEI)
+{
+  if (tinyChat) {
+    // if tiny chat mode is on, run message through our parser and display as text
+    myParseMessage(mBuf, mLen);
+    return true;
+  } else {
+    // otherwise, just pass-though to default handler
+    return origRxMSG(mBuf, mLen, iniTTL, curTTL, uRSSI, FEI);
+  }
+}
+
+
+// reset sender GID (used in test messages) to a random value
+void resetTestGID()
+{
+  for (int i=0; i<6; i++) {
+    testGID[i] = esp_random();
+  }
+  ESP_LOG_BUFFER_HEXDUMP("RAND_GID", testGID, 6, ESP_LOG_INFO);
+}
+
+
 // Generate a text of random size and send it as a "shout" message
 void testMessage(uint16_t msgLen)
 {
@@ -214,6 +439,7 @@ uint8_t gpsSIV = 1;   // satellites in view
 uint8_t gpsDOP = 1;   // point dillution of precision
 uint8_t gpsFix = 1;   // gps fix type
 
+
 void testTakPLI()
 {
   char gtmCoT[256] = {0};
@@ -236,6 +462,8 @@ void playInit()
 {
   LOGI("playground version: %d, gps type: %s", PLAY_VER, GPS_TYPE);
 
+  resetTestGID();
+
 #ifdef HAS_UBXGPS
   // GPS initialization
   gpsInit();
@@ -255,6 +483,9 @@ void playInit()
 #endif  // ADHOC_CALIBRATION
   }
 #endif  // RADIO_SX1276_FHSS
+
+  origRxMSG = onRxMSG;
+  onRxMSG = playRxMSG;
 }
 
 // called from arduino loop
@@ -435,7 +666,7 @@ int playExec(char *conBuf, uint16_t conLen)
           strncpy(hexBuf, conBuf+4, 3);
           int16_t tFreqCorr;
           tFreqCorr = strtol(hexBuf, NULL, 10);
-          if (tFreqCorr)
+          // if (tFreqCorr)
             freqCorrHz = tFreqCorr * FSTEP;
           LOGI("FREQCORR is now %d (%d Hz)", tFreqCorr, freqCorrHz);
           fcorrRegTemp = getRadioTemp();
@@ -445,9 +676,9 @@ int playExec(char *conBuf, uint16_t conLen)
           strncpy(hexBuf, conBuf+4, 6);
           int16_t tFreqCoef;
           tFreqCoef = strtol(hexBuf, NULL, 10);
-          if (tFreqCoef)
+          // if (tFreqCoef)
             freqCoefHz = tFreqCoef;
-          LOGI("FREQCOEF is now %d Hz", tFreqCoef);
+          LOGI("FREQCOEF is now %d Hz", freqCoefHz);
           break;
 #ifdef ADHOC_CALIBRATION
         case 'c':
@@ -457,17 +688,16 @@ int playExec(char *conBuf, uint16_t conLen)
               strncpy(hexBuf, conBuf+4, 6);
               int16_t tCalFCorrHz;
               tCalFCorrHz = strtol(hexBuf, NULL, 10);
-              // if (tFreqCoef)
-                calibFCorrHz = tCalFCorrHz;
-              LOGI("FREQ_CAL is now %d Hz", tFreqCoef);
+              calibFCorrHz = tCalFCorrHz;
+              LOGI("FREQ_CAL is now %d Hz", calibFCorrHz);
               break;
             case 't':
               // calibration temperature
               strncpy(hexBuf, conBuf+4, 6);
               int16_t tCalTemp;
               tCalTemp = strtoul(hexBuf, NULL, 10);
-              if (tCalTemp)
-                calibRegTemp = tCalTemp;
+              //if (tCalTemp)
+              calibRegTemp = tCalTemp;
               LOGI("TEMP_CAL is now %d", calibRegTemp);
               break;
             default:
@@ -537,10 +767,16 @@ int playExec(char *conBuf, uint16_t conLen)
     } else if (conBuf[2] == 'o') {
       if (conBuf[3] == '0') {
         ezOutput = false;
+        tinyChat = false;
       } else if (conBuf[3] == '1') {
         ezOutput = true;
+        tinyChat = false;
+      } else if (conBuf[3] == '2') {
+        ezOutput = false;
+        tinyChat = true;
       }
       LOGI("Easy Output is now %s", (ezOutput ? "ON":"OFF"));
+      LOGI("Tiny Chat Mode now %s", (tinyChat ? "ON":"OFF"));
 
 #ifdef HAS_UBXGPS
     } else if (conBuf[2] == 'c') {
@@ -678,6 +914,7 @@ int playExec(char *conBuf, uint16_t conLen)
       printf("MY_APPID: 0x%04x\n", appID);
       printf("NO_DEDUP: %s\n", noDeDup ? "ON":"OFF");
       printf("EZOUTPUT: %s\n", ezOutput ? "ON":"OFF");
+      printf("TINYCHAT: %s\n", tinyChat ? "ON":"OFF");
       printf("SYS_TIME: %04d-%02d-%02d %02d:%02d:%02d\n", 
              year(), month(), day(), hour(), minute(), second());
 #ifdef HAS_UBXGPS
@@ -748,10 +985,25 @@ int playExec(char *conBuf, uint16_t conLen)
 #endif
       printf("FREQ_COR: %dHz\n", freqCorrHz);
       printf("TEMP_COR: %d\n", fcorrRegTemp);
-      printf("FREQCOEF: %dHz\n", freqCoefHz);
+      printf("FREQCOEF: %dHz/C\n", freqCoefHz);
       printf("TEMP_NOW: %d\n", getRadioTemp());
       printf("NSAMPLES: %d\n", feiHistLen);
       printf("FEI_MEAN: %d\n", feiTrimMean());
+      printf("---\n");
+      printf("SLR_SX_:  %d\n", slrSx);
+      printf("SLR_SY_:  %d\n", slrSy);
+      printf("SLR_SXX:  %d\n", slrSxx);
+      printf("SLR_SXY:  %d\n", slrSxy);
+      printf("SLR_SYY:  %d\n", slrSyy);
+      printf("SLR_NSAM: %d\n", slrNSam);
+      printf("SLR_TMIN: %d\n", slrTMin);
+      printf("SLR_TMAX: %d\n", slrTMax);
+      if (thermalDataReady()) {
+        // We can calculate the line of best fit (values in Hz)
+        struct thermalFreqComp tc = calcThermalFreqComp();
+        printf("SLR_ESTA: %dHz\n", tc.a);
+        printf("SLR_ESTB: %dHz/C\n", tc.b);
+      }
 
 #endif // RADIO_SX1276_FHSS
 
@@ -943,10 +1195,20 @@ int playExec(char *conBuf, uint16_t conLen)
       gtmlabResetCounts();
       LOGI("ALL COUNTERS RESET");
 
+    } else if (conBuf[2] == 'g') {  // reset test GID
+      resetTestGID();
+      // LOGI("TEST GID RESET");
+
 #ifdef RADIO_SX1276_FHSS
     } else if (conBuf[2] == 'e') {  // FEI history (from !de)
       feiHistLen = feiHistPos = 0;
       LOGI("FEI HISTORY RESET");
+
+    } else if (conBuf[2] == 's') {  // Thermal drift data bins (from !de)
+      slrSx = slrSy = slrSxx = slrSyy = slrSxy = slrNSam = 0;
+      slrTMax = -127;
+      slrTMin = 127;
+      LOGI("THERMAL DATA RESET");
 #endif // RADIO_SX1276_FHSS
 
 #ifdef ESP32

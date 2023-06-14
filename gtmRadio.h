@@ -60,6 +60,13 @@ struct regSet {
   uint8_t dChanMap[64];   // map of data channels
 };
 
+// simple linear frequency compensation parameters
+struct thermalFreqComp {
+  // y = a + bx
+  // a in Hz, b in Hz/C
+  int32_t a;  // offset
+  int32_t b;  // slope
+};
 
 // state variables, from gtmRadio.cpp
 extern bool scanning;
@@ -177,6 +184,13 @@ unsigned long getFrequency();
 int feiTrimMeanHz(uint8_t nSamples = FEI_HIST_SIZE, uint8_t trimPercent=20);
 // As above, result in integer FSTEP units
 int16_t feiTrimMean(uint8_t nSamples = FEI_HIST_SIZE, uint8_t trimPercent=20);
+
+// returns true if sufficient data points have been collected to estimate
+//  thermal frequency compensation parameters
+bool thermalDataReady();
+
+// Estimate thermal compensation parameters
+struct thermalFreqComp calcThermalFreqComp();
 
 // Set frequency, argument is channel number (0 to NUMCHANS)
 void setChan(uint8_t chan);
