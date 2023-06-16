@@ -39,7 +39,10 @@
 #include "esp_system.h"
 #endif
 
-#define PLAY_VER 2023060601   // Playground version
+// persistent storage for board-specific settings like calibration
+#include <Preferences.h>
+
+#define PLAY_VER 2023061601   // Playground version
 
 // GTA Message Body TLVs
 #define MSGB_TLV_TYPE 0x01    // Message type, a %d string of a number(!)
@@ -460,6 +463,8 @@ void testTakPLI()
 // Playground initialization, to be called from Arduino init()
 void playInit()
 {
+  Preferences pref;
+
   LOGI("playground version: %d, gps type: %s", PLAY_VER, GPS_TYPE);
 
   resetTestGID();
@@ -470,6 +475,13 @@ void playInit()
 #endif  // HAS_UBXGPS
 
 #ifdef RADIO_SX1276_FHSS
+  // try to load any persisted calibration values
+  pref.begin("GTMCAL", false);
+  calibRegTemp = (pref.getShort("calTemp", 0));
+  calibFCorrHz = (pref.getShort("calFreq", 0));
+  freqCoefHz = (pref.getShort("calCoef", 0));
+  pref.end();
+
   // If either calibration temperature or frequency are non-zero,
   //   use them and skip automatic startup calibration
   if (calibRegTemp || calibFCorrHz) {
@@ -516,6 +528,7 @@ int playExec(char *conBuf, uint16_t conLen)
   uint8_t wVal = 0;
   uint8_t xChan = 0;
   uint8_t mData[256];  // message buffer (for a small message)
+  Preferences pref;
 
   if (conLen && (conBuf[0] != '!')) {
     // take text from conBuf and shout it
@@ -1188,6 +1201,23 @@ int playExec(char *conBuf, uint16_t conLen)
 #endif // RADIO_SX1276_FHSS
 
     }
+
+#ifdef RADIO_SX1276_FHSS
+  } else if (conBuf[1] == 'p') {
+    if (conBuf[2] == 'w') {
+      LOGI("NV WRITE");
+      pref.begin("GTMCAL", false);
+      pref.putShort("calTemp", calibRegTemp);
+      pref.putShort("calFreq", calibFCorrHz);
+      pref.putShort("calCoef", freqCoefHz);
+      pref.end();
+    } else if (conBuf[2] == 'e') {
+      LOGI("NV ERASE");
+      pref.begin("GTMCAL", false);
+      pref.clear();
+      pref.end();
+    }
+#endif // RADIO_SX1276_FHSS
 
   } else if (conBuf[1] == 'z') {
     // Reset (Zero) some internal variables
